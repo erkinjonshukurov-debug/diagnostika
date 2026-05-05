@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 
 const SUPER_ADMIN_ID = 1437230485;
 const ADMIN2_ID = 987654321;
-const OBSERVER_PHONE = '+998915425700';  // YANGI KUZATUVCHI RAQAMI
+const OBSERVER_PHONE = '+998915425700';
 let registeredObserverId = null;
 
 const ADMIN_IDS = [SUPER_ADMIN_ID, ADMIN2_ID];
@@ -19,6 +19,23 @@ const CAR_TYPES = [
     'CNG', 'D-MAX RG', 'D-MAX RT', 'NPR75', 'HD50',
     'HC45', 'CYZ EXR', 'NQR90', 'NMR77', 'NMR85'
 ];
+
+// ============ AVTOMOBIL RAQAMINI TEKSHIRISH (BIR NECHTA FORMATLAR) ============
+function isValidPlate(plate) {
+    const patterns = [
+        /^[0-9]{2}[A-Z][0-9]{3}[A-Z]{2}$/i,  // 01A777AA
+        /^[0-9]{2}[A-Z][0-9]{6}$/i,          // 01A111111
+        /^[0-9]{5}[A-Z]{3}$/i,               // 01111AAA
+        /^[A-Z][0-9]{3}[A-Z]{2}$/i,          // A777AA
+        /^[0-9]{3}[A-Z]{3}$/i,               // 123ABC
+        /^[0-9]{2}[A-Z]{2}[0-9]{3}$/i,       // 01AA777
+        /^[A-Z]{2}[0-9]{3}[A-Z]{2}$/i,       // AA777AA
+        /^[0-9]{2}[A-Z]{3}[0-9]{2}$/i,       // 01ABC77
+        /^[A-Z][0-9]{2}[A-Z][0-9]{2}[A-Z]$/i // A12B34C
+    ];
+    
+    return patterns.some(pattern => pattern.test(plate));
+}
 
 function getCarTypeKeyboard() {
     const buttons = CAR_TYPES.map(type => [Markup.button.callback(type, `car_type_${type}`)]);
@@ -237,7 +254,7 @@ bot.command('menu', async (ctx) => {
     await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
 });
 
-// ============ TASDIQLANGAN AVTOMOBILLAR (3 QATORLI, SAHIFALI, CHIZIQSIZ) ============
+// ============ TASDIQLANGAN AVTOMOBILLAR ============
 async function showPaidCars(ctx, page = 0) {
     const paidCars = getPaidCarsList();
     
@@ -481,8 +498,24 @@ bot.on('text', async (ctx) => {
     
     if (step?.step === 'number') {
         if (!isAdmin(ctx)) return;
-        const platePattern = /^[0-9]{2}[A-Z][0-9]{3}[A-Z]{2}$/i;
-        if (!platePattern.test(text)) return ctx.reply('❌ Noto‘g‘ri format! Masalan: 01A777AA');
+        
+        // YANGI VALIDATSIYA - bir nechta formatlarni qabul qiladi
+        if (!isValidPlate(text)) {
+            return ctx.reply(
+                `❌ *Noto‘g‘ri format!*\n\n` +
+                `Qabul qilinadigan formatlar:\n` +
+                `• 01A777AA (2 raqam, 1 harf, 3 raqam, 2 harf)\n` +
+                `• 01A111111 (2 raqam, 1 harf, 6 raqam)\n` +
+                `• 01111AAA (5 raqam, 3 harf)\n` +
+                `• A777AA (1 harf, 3 raqam, 2 harf)\n` +
+                `• 123ABC (3 raqam, 3 harf)\n` +
+                `• 01AA777 (2 raqam, 2 harf, 3 raqam)\n` +
+                `• AA777AA (2 harf, 3 raqam, 2 harf)\n\n` +
+                `Qaytadan urinib ko'ring!`,
+                { parse_mode: 'Markdown' }
+            );
+        }
+        
         step.carNumber = text.toUpperCase();
         step.step = 'waiting_for_type';
         addSteps.set(ctx.from.id, step);
@@ -504,7 +537,18 @@ bot.on('text', async (ctx) => {
     
     if (text === '🚗 Avtomobil qo\'shish' && isAdmin(ctx)) {
         addSteps.set(ctx.from.id, { step: 'number' });
-        return ctx.reply('📝 *1-qadam:* Avtomobil raqamini kiriting\n\nFormat: `01A777AA`', { parse_mode: 'Markdown' });
+        return ctx.reply(
+            `📝 *1-qadam:* Avtomobil raqamini kiriting\n\n` +
+            `Qabul qilinadigan formatlar:\n` +
+            `• 01A777AA (standart)\n` +
+            `• 01A111111\n` +
+            `• 01111AAA\n` +
+            `• A777AA\n` +
+            `• 123ABC\n` +
+            `• 01AA777\n` +
+            `• AA777AA`,
+            { parse_mode: 'Markdown' }
+        );
     }
     
     if (text === '🗑️ Avtomobil o\'chirish' && isSuperAdmin(ctx)) {
@@ -696,4 +740,3 @@ console.log(`🚗 Avtomobil turlari: ${CAR_TYPES.join(', ')}`);
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
-    
