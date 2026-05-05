@@ -1,67 +1,81 @@
+require('dotenv').config();
 const { Telegraf, Markup, session } = require('telegraf');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const Tesseract = require('tesseract.js');
 const sharp = require('sharp');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 
-// ============ KONFIGURATSIYA ============
-const BOT_TOKEN = 'YOUR_BOT_TOKEN'; // Bot tokenini shu yerga yozing
+// ============ TOKEN .env dan olinadi ============
+const BOT_TOKEN = process.env.BOT_TOKEN;
 
-// 3 ta ruxsat etilgan foydalanuvchi ID (Telegram user ID)
+// 3 ta ruxsat etilgan foydalanuvchi ID (o'zingizni ID laringizni yozing)
 const ALLOWED_USERS = {
-    ADMIN1: 123456789,   // 1-admin ID
-    ADMIN2: 987654321,   // 2-admin ID
-    OBSERVER: 555555555  // Kuzatuvchi ID
+    ADMIN1: YOUR_TELEGRAM_ID_1,     // O'z ID'ingizni qo'ying
+    ADMIN2: YOUR_TELEGRAM_ID_2,     // Ikkinchi admin ID
+    OBSERVER: YOUR_TELEGRAM_ID_3    // Kuzatuvchi ID
 };
 
 const ADMIN_IDS = [ALLOWED_USERS.ADMIN1, ALLOWED_USERS.ADMIN2];
 const OBSERVER_ID = ALLOWED_USERS.OBSERVER;
 
-// Google Sheets sozlamalari
-// Google Cloud Console dan olingan service account json fayli kerak
-const GOOGLE_SHEET_ID = 'YOUR_GOOGLE_SHEET_ID';
-const GOOGLE_SERVICE_ACCOUNT_EMAIL = 'your-service-account@project.iam.gserviceaccount.com';
-const GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n';
-
 // Diagnostika narxi
 const DIAGNOSIS_PRICE = 250000;
 
-// ============ SESSIYA ============
+// ============ BOT ============
 const bot = new Telegraf(BOT_TOKEN);
 bot.use(session());
 
-// ============ GOOGLE SHEETS (Async) ============
+// ============ Google Sheets sozlamalari ============
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID;
+
+// ============ Avatar (welcome photo) ============
+const WELCOME_PHOTO = 'https://example.com/welcome.jpg'; // O'z rasmingizni URL ini qo'ying
+
+// ============ ASOSIY FUNKSIYALAR ============
 let doc;
+
 async function initGoogleSheets() {
     try {
         doc = new GoogleSpreadsheet(GOOGLE_SHEET_ID);
         await doc.useServiceAccountAuth({
-            client_email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
-            private_key: GOOGLE_PRIVATE_KEY,
+            client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+            private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
         });
         await doc.loadInfo();
-        console.log('✅ Google Sheets ga ulandi');
+        
+        // Agar sheet mavjud bo'lmasa, yaratish
+        let sheet = doc.sheetsByIndex[0];
+        if (!sheet) {
+            sheet = await doc.addSheet({ title: 'Diagnostika' });
+            await sheet.setHeaderRow(['Sana', 'Raqam', 'Turi', 'Diagnostika', 'Narxi', 'Admin']);
+        }
+        
+        console.log('✅ Google Sheets ulandi');
+        return true;
     } catch (err) {
         console.error('❌ Google Sheets xatosi:', err.message);
+        return false;
     }
 }
 
 // Ma'lumot qo'shish
-async function addToSheet(carNumber, carType, isDiagnosed, adminId) {
+async function addToSheet(carNumber, carType, isDiagnosed, adminId, adminName) {
     try {
         const sheet = doc.sheetsByIndex[0];
         const price = isDiagnosed ? DIAGNOSIS_PRICE : 0;
-        const diagnosisStatus = isDiagnosed ? "o‘tkazildi" : "o‘tkazilmadi";
-        const date = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
+        const diagnosisStatus = isDiagnosed ? "✅ o‘tkazildi" : "❌ o‘tkazilmadi";
+        
+        const now = new Date();
+        const date = now.toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
         
         await sheet.addRow({
             Sana: date,
-            Raqam: carNumber,
+            Raqam: carNumber.toUpperCase(),
             Turi: carType,
             Diagnostika: diagnosisStatus,
             Narxi: price,
-            Admin: adminId
+            Admin: `${adminName} (${adminId})`
         });
         
         return true;
@@ -77,15 +91,20 @@ async function getTotalSum() {
         const sheet = doc.sheetsByIndex[0];
         const rows = await sheet.getRows();
         let total = 0;
+        let count = 0;
+        
         rows.forEach(row => {
-            if (row.Diagnostika === "o‘tkazildi") {
-                total += parseInt(row.Narxi) || 0;
+            if (row.Diagnostika.includes('o‘tkazildi')) {
+                const price = parseInt(row.Narxi) || 0;
+                total += price;
+                count++;
             }
         });
-        return total;
+        
+        return { total, count };
     } catch (err) {
         console.error('❌ Jami summa xatosi:', err);
-        return 0;
+        return { total: 0, count: 0 };
     }
 }
 
@@ -94,13 +113,13 @@ async function checkCar(carNumber) {
     try {
         const sheet = doc.sheetsByIndex[0];
         const rows = await sheet.getRows();
-        const car = rows.find(row => row.Raqam === carNumber);
+        const car = rows.find(row => row.Raqam === carNumber.toUpperCase());
         
         if (car) {
             return {
                 exists: true,
                 carType: car.Turi,
-                diagnosed: car.Diagnostika === "o‘tkazildi",
+                diagnosed: car.Diagnostika.includes('o‘tkazildi'),
                 price: car.Narxi,
                 date: car.Sana
             };
@@ -112,34 +131,53 @@ async function checkCar(carNumber) {
     }
 }
 
-// So'nggi 10 ta yozuvni olish
-async function getLast10Records() {
+// So'nggi yozuvlarni olish
+async function getLastRecords(limit = 10) {
     try {
         const sheet = doc.sheetsByIndex[0];
         const rows = await sheet.getRows();
-        const last10 = rows.slice(-10).reverse();
-        let message = "📋 So‘nggi 10 ta diagnostika:\n\n";
-        last10.forEach((row, idx) => {
+        
+        if (rows.length === 0) {
+            return "📋 Hali hech qanday ma'lumot yo‘q.";
+        }
+        
+        const lastRecords = rows.slice(-limit).reverse();
+        let message = `📋 So‘nggi ${lastRecords.length} ta yozuv:\n\n`;
+        
+        lastRecords.forEach((row, idx) => {
             message += `${idx+1}. ${row.Raqam} | ${row.Turi} | ${row.Diagnostika} | ${row.Narxi} so‘m\n`;
         });
+        
         return message;
     } catch (err) {
         return "❌ Ma'lumot olishda xatolik";
     }
 }
 
-// ============ RAQAMNI RASMDAN O'QISH (OCR) ============
-async function recognizePlateFromImage(filePath) {
+// ============ RASMDAN RAQAM O'QISH ============
+async function downloadPhoto(fileId) {
+    const fileLink = await bot.telegram.getFileLink(fileId);
+    const response = await fetch(fileLink.href);
+    const buffer = await response.arrayBuffer();
+    return Buffer.from(buffer);
+}
+
+async function recognizePlateFromImage(imageBuffer) {
     try {
-        // Rasmni optimallashtirish (kichraytirish, kontrast oshirish)
-        const optimizedPath = path.join(__dirname, 'temp_optimized.jpg');
-        await sharp(filePath)
-            .resize(800)
+        // Vaqtinchalik faylga saqlash
+        const tempPath = path.join(__dirname, `temp_${Date.now()}.jpg`);
+        fs.writeFileSync(tempPath, imageBuffer);
+        
+        // Rasmni optimallashtirish
+        const optimizedPath = path.join(__dirname, `temp_opt_${Date.now()}.jpg`);
+        await sharp(tempPath)
+            .resize(1000, null, { fit: 'inside' })
             .grayscale()
             .normalize()
+            .sharpen()
             .toFile(optimizedPath);
         
-        // OCR bilan raqamni o'qish
+        // OCR
         const { data: { text } } = await Tesseract.recognize(
             optimizedPath,
             'uzb+eng',
@@ -148,25 +186,33 @@ async function recognizePlateFromImage(filePath) {
             }
         );
         
-        // Tozalash: faqat harflar va raqamlarni olish
+        // Tozalash
+        fs.unlinkSync(tempPath);
+        fs.unlinkSync(optimizedPath);
+        
+        // Matnni tozalash
         const cleanText = text.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
         
-        // O'zbek avto raqam patterni (masalan: 01A777AA)
-        const pattern = /[0-9]{2}[A-Z]{1}[0-9]{3}[A-Z]{2}/;
-        const match = cleanText.match(pattern);
+        // O'zbek avto raqam patterni
+        const patterns = [
+            /[0-9]{2}[A-Z]{1}[0-9]{3}[A-Z]{2}/,  // 01A777AA
+            /[0-9]{2}[A-Z]{2}[0-9]{3}[A-Z]{1}/,  // 01AA777A
+            /[0-9]{3}[A-Z]{1}[0-9]{3}[A-Z]{1}/   // 123A456B
+        ];
         
-        // Tozalash
-        fs.unlinkSync(optimizedPath);
-        if (filePath.includes('temp_')) fs.unlinkSync(filePath);
+        for (const pattern of patterns) {
+            const match = cleanText.match(pattern);
+            if (match) return match[0];
+        }
         
-        return match ? match[0] : null;
+        return null;
     } catch (err) {
         console.error('OCR xatosi:', err);
         return null;
     }
 }
 
-// ============ RUHSATNI TEKSHIRISH ============
+// ============ RUHSAT TEKSHIRISH ============
 function isAdmin(ctx) {
     return ADMIN_IDS.includes(ctx.from.id);
 }
@@ -179,340 +225,402 @@ function isAllowed(ctx) {
     return isAdmin(ctx) || isObserver(ctx);
 }
 
-// ============ ASOSIY BOT FUNKSIYALARI ============
+// ============ BOT BUYRUQLARI ============
+
+// /start
 bot.start(async (ctx) => {
     if (!isAllowed(ctx)) {
-        return ctx.reply('❌ Sizga ruxsat yo‘q! Bot faqat cheklangan foydalanuvchilar uchun.');
+        return ctx.reply(
+            '❌ *Sizga ruxsat yo‘q!*\n\n' +
+            'Bu bot faqat cheklangan foydalanuvchilar uchun.',
+            { parse_mode: 'Markdown' }
+        );
     }
     
+    const welcomeMessage = isAdmin(ctx) ?
+        `👋 *Assalomu alaykum, Admin ${ctx.from.first_name}!*\n\n` +
+        `✅ *Sizning huquqlaringiz:*\n` +
+        `• Diagnostika qo‘shish (matn/rasm)\n` +
+        `• Ma'lumotlarni ko‘rish\n` +
+        `• Hisobot olish\n\n` +
+        `📌 *Buyruqlar:*\n` +
+        `/add - Avtomobil qo‘shish\n` +
+        `/total - Jami summa\n` +
+        `/last - So‘nggi yozuvlar\n` +
+        `/check - Tekshirish\n` +
+        `/help - Yordam`
+        :
+        `👋 *Assalomu alaykum, ${ctx.from.first_name}!*\n\n` +
+        `👁️ *Siz kuzatuvchisiz*\n\n` +
+        `📌 *Buyruqlar:*\n` +
+        `/check [raqam] - Avtomobilni tekshirish\n` +
+        `/total - Jami summa\n` +
+        `/last - So‘nggi yozuvlar\n` +
+        `/help - Yordam`;
+    
+    await ctx.replyWithPhoto(
+        { url: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=800' },
+        { caption: welcomeMessage, parse_mode: 'Markdown' }
+    );
+});
+
+// /help
+bot.help(async (ctx) => {
+    if (!isAllowed(ctx)) return;
+    
+    const helpText = isAdmin(ctx) ?
+        `📖 *Admin uchun qo‘llanma*\n\n` +
+        `🔹 /add - Yangi avtomobil qo‘shish\n` +
+        `   • Matn orqali raqam kiritish\n` +
+        `   • Rasm yuborish (avtomatik raqam o‘qiladi)\n\n` +
+        `🔹 /total - Jami diagnostika summasini ko‘rish\n` +
+        `🔹 /last - So‘nggi 10 ta yozuv\n` +
+        `🔹 /check [raqam] - Avtomobilni tekshirish\n` +
+        `🔹 /help - Yordam\n\n` +
+        `💡 *Misol:* /check 01A777AA`
+        :
+        `📖 *Kuzatuvchi uchun qo‘llanma*\n\n` +
+        `🔹 /check [raqam] - Avtomobil diagnostikasini tekshirish\n` +
+        `🔹 /total - Barcha diagnostika summasi\n` +
+        `🔹 /last - So‘nggi 10 ta yozuv\n` +
+        `🔹 /help - Yordam\n\n` +
+        `💡 *Misol:* /check 01A777AA`;
+    
+    await ctx.reply(helpText, { parse_mode: 'Markdown' });
+});
+
+// /add
+bot.command('add', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    
     await ctx.reply(
-        `👋 Xush kelibsiz, ${ctx.from.first_name}!\n\n` +
-        (isAdmin(ctx) ? 
-            "✅ **Admin huquqlari:**\n" +
-            "/add_car - Avtomobil qo‘shish (matn)\n" +
-            "/add_photo - Rasm orqali qo‘shish\n" +
-            "/total - Jami summani ko‘rish\n" +
-            "/last - So‘nggi 10 ta yozuv\n" +
-            "/help - Yordam"
-            :
-            "👁️ **Kuzatuvchi huquqlari:**\n" +
-            "/check [raqam] - Avtomobilni tekshirish\n" +
-            "/total - Jami summani ko‘rish\n" +
-            "/last - So‘nggi 10 ta yozuv\n" +
-            "/help - Yordam"
-        ),
+        '🚗 *Yangi avtomobil qo‘shish*\n\n' +
+        'Qanday usulda qo‘shmoqchisiz?',
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [
+                    Markup.button.callback('📝 Matn orqali', 'add_text'),
+                    Markup.button.callback('📸 Rasm orqali', 'add_photo')
+                ],
+                [Markup.button.callback('❌ Bekor qilish', 'cancel_add')]
+            ])
+        }
+    );
+});
+
+// /total
+bot.command('total', async (ctx) => {
+    if (!isAllowed(ctx)) return;
+    
+    const { total, count } = await getTotalSum();
+    await ctx.reply(
+        `💰 *Diagnostika hisoboti*\n\n` +
+        `• Diagnostika qilingan avtomobillar: ${count} ta\n` +
+        `• Jami summa: ${total.toLocaleString()} so‘m\n\n` +
+        `🏷️ *Bir diagnostika narxi:* ${DIAGNOSIS_PRICE.toLocaleString()} so‘m`,
         { parse_mode: 'Markdown' }
     );
 });
 
-// Yordam
-bot.help(async (ctx) => {
-    if (!isAllowed(ctx)) return;
-    
-    if (isAdmin(ctx)) {
-        await ctx.reply(
-            "📖 **Admin buyruqlari:**\n\n" +
-            "/add_car - Matn orqali avtomobil qo‘shish\n" +
-            "/add_photo - Rasm yuborib qo‘shish\n" +
-            "/total - Diagnostika jami summasini ko‘rish\n" +
-            "/last - So‘nggi 10 ta yozuv\n" +
-            "/start - Bosh menyu\n" +
-            "/help - Bu yordam\n\n" +
-            "💡 **Ishlatish tartibi:**\n" +
-            "1. /add_car → raqam → turi → diagnostika holati\n" +
-            "2. Rasm yuborsangiz, avtomatik raqam o‘qiladi"
-        );
-    } else {
-        await ctx.reply(
-            "📖 **Kuzatuvchi buyruqlari:**\n\n" +
-            "/check [raqam] - Avtomobil diagnostikasi bor yoki yo‘q\n" +
-            "/total - Barcha diagnostika summasi\n" +
-            "/last - So‘nggi 10 ta yozuv\n" +
-            "/start - Bosh menyu\n" +
-            "/help - Bu yordam"
-        );
-    }
-});
-
-// Jami summa
-bot.command('total', async (ctx) => {
-    if (!isAllowed(ctx)) return;
-    
-    const total = await getTotalSum();
-    await ctx.reply(`💰 **Jami diagnostika summasi:** ${total.toLocaleString()} so‘m\n📊 (faqat "o‘tkazildi" bo‘lganlar)`, { parse_mode: 'Markdown' });
-});
-
-// So'nggi 10 ta yozuv
+// /last
 bot.command('last', async (ctx) => {
     if (!isAllowed(ctx)) return;
     
-    const message = await getLast10Records();
+    const message = await getLastRecords(10);
     await ctx.reply(message);
 });
 
-// Avtomobilni tekshirish (faqat kuzatuvchi va adminlar ham tekshira oladi)
+// /check
 bot.command('check', async (ctx) => {
     if (!isAllowed(ctx)) return;
     
     const args = ctx.message.text.split(' ');
     if (args.length < 2) {
-        return ctx.reply('❌ Iltimos, raqamni kiriting: `/check 01A777AA`', { parse_mode: 'Markdown' });
+        return ctx.reply(
+            '❌ *Iltimos, raqamni kiriting!*\n\n' +
+            'Misol: `/check 01A777AA`',
+            { parse_mode: 'Markdown' }
+        );
     }
     
     const carNumber = args[1].toUpperCase();
     const result = await checkCar(carNumber);
     
     if (result.error) {
-        return ctx.reply('❌ Xatolik yuz berdi');
+        return ctx.reply('❌ Xatolik yuz berdi. Qaytadan urinib ko‘ring.');
     }
     
     if (result.exists) {
+        const statusIcon = result.diagnosed ? '✅' : '❌';
+        const statusText = result.diagnosed ? 'O‘tkazilgan' : 'O‘tkazilmagan';
+        
+        await ctx.replyWithPhoto(
+            { url: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?w=400' },
+            {
+                caption: `🚗 *Avtomobil ma'lumotlari*\n\n` +
+                        `📌 *Raqam:* ${carNumber}\n` +
+                        `🏷️ *Turi:* ${result.carType}\n` +
+                        `🔧 *Diagnostika:* ${statusIcon} ${statusText}\n` +
+                        `💰 *Narxi:* ${result.price} so‘m\n` +
+                        `📅 *Sana:* ${result.date}`,
+                parse_mode: 'Markdown'
+            }
+        );
+    } else {
         await ctx.reply(
-            `🚗 **Avtomobil ma'lumotlari:**\n\n` +
-            `📌 Raqam: ${carNumber}\n` +
-            `🏷️ Turi: ${result.carType}\n` +
-            `🔧 Diagnostika: ${result.diagnosed ? '✅ O‘tkazilgan' : '❌ O‘tkazilmagan'}\n` +
-            `💰 Narxi: ${result.price} so‘m\n` +
-            `📅 Sana: ${result.date}`,
+            `❌ *${carNumber}* raqamli avtomobil topilmadi.\n\n` +
+            `Diagnostika qilinmagan yoki noto‘g‘ri raqam kiritilgan bo‘lishi mumkin.`,
             { parse_mode: 'Markdown' }
         );
-    } else {
-        await ctx.reply(`❌ ${carNumber} raqamli avtomobil topilmadi.`);
     }
 });
 
-// ADMIN: Matn orqali qo'shish (step-by-step)
-const addCarSteps = new Map();
+// ============ INLINE BUTTON HANDLERS ============
 
-bot.command('add_car', async (ctx) => {
+// Qo'shish usulini tanlash
+bot.action('add_text', async (ctx) => {
     if (!isAdmin(ctx)) return;
     
-    addCarSteps.set(ctx.from.id, { step: 'number' });
-    await ctx.reply('🚗 **Yangi avtomobil qo‘shish**\n\n1-qadam: Avtomobil raqamini kiriting (masalan: 01A777AA)', { parse_mode: 'Markdown' });
-});
-
-// ADMIN: Rasm orqali qo'shish
-bot.command('add_photo', async (ctx) => {
-    if (!isAdmin(ctx)) return;
+    await ctx.editMessageText(
+        '📝 *Matn orqali qo‘shish*\n\n' +
+        '1. Avtomobil raqamini kiriting (masalan: 01A777AA)',
+        { parse_mode: 'Markdown' }
+    );
     
-    await ctx.reply('📸 **Rasm yuboring** – bot avtomobil raqamini avtomatik o‘qib oladi.\n\nRasm aniq va raqam yaqqol ko‘rinishi kerak.');
-    addCarSteps.set(ctx.from.id, { step: 'photo' });
-});
-
-// Matn va rasmlarni qayta ishlash
-bot.on('text', async (ctx) => {
-    if (!isAdmin(ctx)) return;
-    
-    const stepData = addCarSteps.get(ctx.from.id);
-    if (!stepData) return;
-    
-    const text = ctx.message.text;
-    
-    if (stepData.step === 'number') {
-        // Raqamni tekshirish
-        const platePattern = /^[0-9]{2}[A-Z]{1}[0-9]{3}[A-Z]{2}$/;
-        if (!platePattern.test(text.toUpperCase())) {
-            return ctx.reply('❌ Noto‘g‘ri format! Masalan: 01A777AA (2 raqam, 1 harf, 3 raqam, 2 harf)');
-        }
-        
-        stepData.carNumber = text.toUpperCase();
-        stepData.step = 'type';
-        addCarSteps.set(ctx.from.id, stepData);
-        await ctx.reply('✅ Raqam qabul qilindi!\n\n2-qadam: Avtomobil turini kiriting (masalan: Malibu, Cobalt, Spark, Nexia)');
-    }
-    else if (stepData.step === 'type') {
-        stepData.carType = text;
-        stepData.step = 'diagnosis';
-        addCarSteps.set(ctx.from.id, stepData);
-        
-        await ctx.reply(
-            `✅ Avtomobil turi: ${text}\n\n3-qadam: Diagnostika holatini tanlang:`,
-            Markup.inlineKeyboard([
-                [Markup.button.callback('✅ Diagnostika o‘tkazildi (250 000 so‘m)', 'diag_yes')],
-                [Markup.button.callback('❌ Diagnostika o‘tkazilmadi', 'diag_no')],
-                [Markup.button.callback('❌ Bekor qilish', 'cancel')]
-            ])
-        );
-    }
-});
-
-// Rasm qabul qilish (admin uchun)
-bot.on('photo', async (ctx) => {
-    if (!isAdmin(ctx)) return;
-    
-    const stepData = addCarSteps.get(ctx.from.id);
-    const isPhotoFlow = stepData && stepData.step === 'photo';
-    
-    await ctx.reply('⏳ Rasm tahlil qilinmoqda, iltimos kuting...');
-    
-    try {
-        // Rasmni yuklab olish
-        const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-        const fileLink = await ctx.telegram.getFileLink(fileId);
-        
-        const tempPath = path.join(__dirname, `temp_${Date.now()}.jpg`);
-        const response = await fetch(fileLink.href);
-        const buffer = await response.arrayBuffer();
-        fs.writeFileSync(tempPath, Buffer.from(buffer));
-        
-        // OCR orqali raqamni o'qish
-        const plateNumber = await recognizePlateFromImage(tempPath);
-        
-        if (!plateNumber) {
-            return ctx.reply('❌ Raqamni o‘qib bo‘lmadi. Iltimos, aniqroq rasm yuboring yoki /add_car buyrug‘idan foydalaning.');
-        }
-        
-        await ctx.reply(`🔍 Rasmda topilgan raqam: *${plateNumber}*\n\nTo‘g‘rimi?`, { parse_mode: 'Markdown' });
-        
-        // Saqlash uchun vaqtinchalik ma'lumot
-        addCarSteps.set(ctx.from.id, {
-            step: 'photo_type',
-            carNumber: plateNumber
-        });
-        
-    } catch (err) {
-        console.error(err);
-        await ctx.reply('❌ Xatolik yuz berdi. Qaytadan urinib ko‘ring.');
-    }
-});
-
-// Inline button handler
-bot.action('diag_yes', async (ctx) => {
-    const stepData = addCarSteps.get(ctx.from.id);
-    if (!stepData || stepData.step !== 'diagnosis') {
-        return ctx.answerCbQuery('Bot holati noto‘g‘ri, /add_car qaytadan boshlang');
-    }
-    
-    const success = await addToSheet(stepData.carNumber, stepData.carType, true, ctx.from.id);
-    
-    if (success) {
-        await ctx.editMessageText(
-            `✅ **Avtomobil qo‘shildi!**\n\n` +
-            `🚗 Raqam: ${stepData.carNumber}\n` +
-            `🏷️ Turi: ${stepData.carType}\n` +
-            `🔧 Diagnostika: o‘tkazildi\n` +
-            `💰 Narxi: ${DIAGNOSIS_PRICE.toLocaleString()} so‘m`
-        );
-    } else {
-        await ctx.editMessageText('❌ Ma\'lumotni saqlashda xatolik yuz berdi');
-    }
-    
-    addCarSteps.delete(ctx.from.id);
+    // Holatni saqlash
+    ctx.session = ctx.session || {};
+    ctx.session.addStep = 'number';
     await ctx.answerCbQuery();
 });
 
-bot.action('diag_no', async (ctx) => {
-    const stepData = addCarSteps.get(ctx.from.id);
-    if (!stepData || stepData.step !== 'diagnosis') {
-        return ctx.answerCbQuery('Bot holati noto‘g‘ri, /add_car qaytadan boshlang');
-    }
+bot.action('add_photo', async (ctx) => {
+    if (!isAdmin(ctx)) return;
     
-    const success = await addToSheet(stepData.carNumber, stepData.carType, false, ctx.from.id);
+    await ctx.editMessageText(
+        '📸 *Rasm orqali qo‘shish*\n\n' +
+        'Avtomobil raqami aniq ko‘rinadigan rasm yuboring.\n\n' +
+        'Bot raqamni avtomatik o‘qib oladi.',
+        { parse_mode: 'Markdown' }
+    );
     
-    if (success) {
-        await ctx.editMessageText(
-            `✅ **Avtomobil qo‘shildi!**\n\n` +
-            `🚗 Raqam: ${stepData.carNumber}\n` +
-            `🏷️ Turi: ${stepData.carType}\n` +
-            `🔧 Diagnostika: o‘tkazilmadi\n` +
-            `💰 Narxi: 0 so‘m`
-        );
-    } else {
-        await ctx.editMessageText('❌ Ma\'lumotni saqlashda xatolik yuz berdi');
-    }
-    
-    addCarSteps.delete(ctx.from.id);
+    ctx.session = ctx.session || {};
+    ctx.session.addStep = 'photo';
     await ctx.answerCbQuery();
 });
 
-bot.action('cancel', async (ctx) => {
-    addCarSteps.delete(ctx.from.id);
+bot.action('cancel_add', async (ctx) => {
+    ctx.session = ctx.session || {};
+    ctx.session.addStep = null;
     await ctx.editMessageText('❌ Bekor qilindi');
     await ctx.answerCbQuery();
 });
 
-// Rasm orqali kiritish uchun type so'rash
+// Matn orqali qo'shish jarayoni
 bot.on('text', async (ctx) => {
     if (!isAdmin(ctx)) return;
+    if (!ctx.session || !ctx.session.addStep) return;
     
-    const stepData = addCarSteps.get(ctx.from.id);
-    if (!stepData || stepData.step !== 'photo_type') return;
+    const step = ctx.session.addStep;
+    const text = ctx.message.text;
     
-    if (ctx.message.text.toLowerCase() === 'ha') {
-        stepData.step = 'photo_type_wait';
-        addCarSteps.set(ctx.from.id, stepData);
-        await ctx.reply('Avtomobil turini kiriting (masalan: Malibu):');
-    } 
-    else if (ctx.message.text.toLowerCase() === 'yo\'q' || ctx.message.text.toLowerCase() === 'no') {
-        addCarSteps.delete(ctx.from.id);
-        await ctx.reply('❌ Bekor qilindi. Qaytadan /add_photo yuboring.');
+    if (step === 'number') {
+        // Raqamni tekshirish
+        const platePattern = /^[0-9]{2}[A-Z]{1}[0-9]{3}[A-Z]{2}$/i;
+        if (!platePattern.test(text)) {
+            return ctx.reply(
+                '❌ *Noto‘g‘ri format!*\n\n' +
+                'Raqam quyidagi ko‘rinishda bo‘lishi kerak:\n' +
+                '`01A777AA`\n\n' +
+                'Qaytadan kiriting yoki /cancel',
+                { parse_mode: 'Markdown' }
+            );
+        }
+        
+        ctx.session.carNumber = text.toUpperCase();
+        ctx.session.addStep = 'type';
+        await ctx.reply(
+            `✅ Raqam: *${text.toUpperCase()}*\n\n` +
+            '2. Avtomobil turini kiriting (masalan: Malibu, Cobalt, Spark)',
+            { parse_mode: 'Markdown' }
+        );
     }
-    else if (stepData.step === 'photo_type_wait') {
-        // Endi tur kiritiladi
-        stepData.carType = ctx.message.text;
-        stepData.step = 'photo_diagnosis';
-        addCarSteps.set(ctx.from.id, stepData);
+    else if (step === 'type') {
+        ctx.session.carType = text;
+        ctx.session.addStep = null;
         
         await ctx.reply(
-            `✅ Avtomobil turi: ${ctx.message.text}\n\nDiagnostika holatini tanlang:`,
-            Markup.inlineKeyboard([
-                [Markup.button.callback('✅ Diagnostika o‘tkazildi (250 000 so‘m)', 'photo_diag_yes')],
-                [Markup.button.callback('❌ Diagnostika o‘tkazilmadi', 'photo_diag_no')]
+            `✅ *Ma'lumotlar qabul qilindi*\n\n` +
+            `🚗 Raqam: ${ctx.session.carNumber}\n` +
+            `🏷️ Turi: ${text}\n\n` +
+            `🔧 Diagnostika holati?`,
+            {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([
+                    [
+                        Markup.button.callback(`✅ O‘tkazildi (${DIAGNOSIS_PRICE.toLocaleString()} so‘m)`, 'diag_yes'),
+                        Markup.button.callback('❌ O‘tkazilmadi', 'diag_no')
+                    ]
+                ])
+            }
+        );
+    }
+});
+
+// Diagnostika javoblari
+bot.action('diag_yes', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!ctx.session || !ctx.session.carNumber) return;
+    
+    const success = await addToSheet(
+        ctx.session.carNumber,
+        ctx.session.carType,
+        true,
+        ctx.from.id,
+        ctx.from.first_name
+    );
+    
+    if (success) {
+        await ctx.editMessageText(
+            `✅ *Avtomobil qo‘shildi!*\n\n` +
+            `🚗 Raqam: ${ctx.session.carNumber}\n` +
+            `🏷️ Turi: ${ctx.session.carType}\n` +
+            `🔧 Diagnostika: O‘tkazilgan ✅\n` +
+            `💰 Narxi: ${DIAGNOSIS_PRICE.toLocaleString()} so‘m\n\n` +
+            `➕ Admin: ${ctx.from.first_name}`,
+            { parse_mode: 'Markdown' }
+        );
+        
+        // Kuzatuvchiga xabar yuborish
+        await bot.telegram.sendMessage(
+            OBSERVER_ID,
+            `🔔 *Yangi diagnostika qo‘shildi!*\n\n` +
+            `🚗 ${ctx.session.carNumber} avtomobiliga diagnostika o‘tkazildi.\n` +
+            `💰 Narxi: ${DIAGNOSIS_PRICE.toLocaleString()} so‘m`,
+            { parse_mode: 'Markdown' }
+        );
+    } else {
+        await ctx.editMessageText('❌ Xatolik yuz berdi. Qaytadan urinib ko‘ring.');
+    }
+    
+    ctx.session = {};
+    await ctx.answerCbQuery();
+});
+
+bot.action('diag_no', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!ctx.session || !ctx.session.carNumber) return;
+    
+    const success = await addToSheet(
+        ctx.session.carNumber,
+        ctx.session.carType,
+        false,
+        ctx.from.id,
+        ctx.from.first_name
+    );
+    
+    if (success) {
+        await ctx.editMessageText(
+            `✅ *Avtomobil qo‘shildi!*\n\n` +
+            `🚗 Raqam: ${ctx.session.carNumber}\n` +
+            `🏷️ Turi: ${ctx.session.carType}\n` +
+            `🔧 Diagnostika: O‘tkazilmagan ❌\n` +
+            `💰 Narxi: 0 so‘m`,
+            { parse_mode: 'Markdown' }
+        );
+    } else {
+        await ctx.editMessageText('❌ Xatolik yuz berdi.');
+    }
+    
+    ctx.session = {};
+    await ctx.answerCbQuery();
+});
+
+// Rasm orqali qo'shish
+bot.on('photo', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!ctx.session || ctx.session.addStep !== 'photo') return;
+    
+    await ctx.reply('⏳ *Rasm tahlil qilinmoqda...*\nIltimos, kuting.', { parse_mode: 'Markdown' });
+    
+    try {
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const imageBuffer = await downloadPhoto(photo.file_id);
+        const plateNumber = await recognizePlateFromImage(imageBuffer);
+        
+        if (!plateNumber) {
+            await ctx.reply(
+                '❌ *Raqamni o‘qib bo‘lmadi*\n\n' +
+                'Iltimos, aniqroq rasm yuboring yoki matn orqali kiritish uchun /add buyrug‘idan foydalaning.',
+                { parse_mode: 'Markdown' }
+            );
+            ctx.session.addStep = null;
+            return;
+        }
+        
+        ctx.session.carNumber = plateNumber;
+        ctx.session.addStep = 'photo_type';
+        
+        await ctx.reply(
+            `🔍 *Rasmda topilgan raqam:* \`${plateNumber}\`\n\n` +
+            `✅ To‘g‘ri bo‘lsa, avtomobil turini kiriting:\n` +
+            `❌ Noto‘g‘ri bo‘lsa, /cancel buyrug‘ini yuboring.`,
+            { parse_mode: 'Markdown' }
+        );
+    } catch (err) {
+        console.error(err);
+        await ctx.reply('❌ Xatolik yuz berdi. Qaytadan urinib ko‘ring.');
+        ctx.session.addStep = null;
+    }
+});
+
+// Rasm orqali tur kiritish
+bot.on('text', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    if (!ctx.session || ctx.session.addStep !== 'photo_type') return;
+    
+    if (ctx.message.text.toLowerCase() === '/cancel') {
+        ctx.session.addStep = null;
+        return ctx.reply('❌ Bekor qilindi');
+    }
+    
+    ctx.session.carType = ctx.message.text;
+    ctx.session.addStep = null;
+    
+    await ctx.reply(
+        `✅ *Ma'lumotlar qabul qilindi*\n\n` +
+        `🚗 Raqam: ${ctx.session.carNumber}\n` +
+        `🏷️ Turi: ${ctx.message.text}\n\n` +
+        `🔧 Diagnostika holati?`,
+        {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+                [
+                    Markup.button.callback(`✅ O‘tkazildi (${DIAGNOSIS_PRICE.toLocaleString()} so‘m)`, 'diag_yes'),
+                    Markup.button.callback('❌ O‘tkazilmadi', 'diag_no')
+                ]
             ])
-        );
-    }
+        }
+    );
 });
 
-// Photo flow uchun diagnosis handler
-bot.action('photo_diag_yes', async (ctx) => {
-    const stepData = addCarSteps.get(ctx.from.id);
-    if (!stepData || stepData.step !== 'photo_diagnosis') return;
-    
-    const success = await addToSheet(stepData.carNumber, stepData.carType, true, ctx.from.id);
-    
-    if (success) {
-        await ctx.editMessageText(
-            `✅ **Rasm orqali avtomobil qo‘shildi!**\n\n` +
-            `🚗 Raqam: ${stepData.carNumber}\n` +
-            `🏷️ Turi: ${stepData.carType}\n` +
-            `🔧 Diagnostika: o‘tkazildi\n` +
-            `💰 Narxi: ${DIAGNOSIS_PRICE.toLocaleString()} so‘m`
-        );
-    } else {
-        await ctx.editMessageText('❌ Xatolik');
-    }
-    
-    addCarSteps.delete(ctx.from.id);
-    await ctx.answerCbQuery();
-});
-
-bot.action('photo_diag_no', async (ctx) => {
-    const stepData = addCarSteps.get(ctx.from.id);
-    if (!stepData || stepData.step !== 'photo_diagnosis') return;
-    
-    const success = await addToSheet(stepData.carNumber, stepData.carType, false, ctx.from.id);
-    
-    if (success) {
-        await ctx.editMessageText(
-            `✅ **Avtomobil qo‘shildi!**\n\n` +
-            `🚗 Raqam: ${stepData.carNumber}\n` +
-            `🏷️ Turi: ${stepData.carType}\n` +
-            `🔧 Diagnostika: o‘tkazilmadi\n` +
-            `💰 Narxi: 0 so‘m`
-        );
-    } else {
-        await ctx.editMessageText('❌ Xatolik');
-    }
-    
-    addCarSteps.delete(ctx.from.id);
-    await ctx.answerCbQuery();
+bot.command('cancel', async (ctx) => {
+    if (ctx.session) ctx.session = {};
+    await ctx.reply('❌ Bekor qilindi');
 });
 
 // ============ BOTNI ISHGA TUSHIRISH ============
 async function startBot() {
-    await initGoogleSheets();
+    const sheetsReady = await initGoogleSheets();
+    if (!sheetsReady) {
+        console.log('⚠️ Google Sheets ulanishi muvaffaqiyatsiz, lekin bot davom etadi...');
+    }
+    
     bot.launch();
     console.log('🤖 Bot ishga tushdi...');
+    console.log(`📝 Admin IDlar: ${ADMIN_IDS.join(', ')}`);
+    console.log(`👁️ Kuzatuvchi ID: ${OBSERVER_ID}`);
+    console.log(`💰 Diagnostika narxi: ${DIAGNOSIS_PRICE} so‘m`);
 }
 
 startBot();
