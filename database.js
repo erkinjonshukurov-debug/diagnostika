@@ -17,7 +17,17 @@ db.run(`
   )
 `);
 
-// Ma'lumot qo'shish
+// Adminlar jadvali
+db.run(`
+  CREATE TABLE IF NOT EXISTS admins (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    phone TEXT
+  )
+`);
+
 function addCar(carNumber, carType, isDiagnosed, adminId, adminName) {
   const sana = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
   const diagnostika = isDiagnosed ? "o‘tkazildi" : "o‘tkazilmadi";
@@ -25,7 +35,7 @@ function addCar(carNumber, carType, isDiagnosed, adminId, adminName) {
   
   return new Promise((resolve, reject) => {
     db.run(
-      `INSERT INTO avtomobillar (sana, raqam, turi, diagnostika, narxi, admin_id, admin_name)
+      `INSERT OR REPLACE INTO avtomobillar (sana, raqam, turi, diagnostika, narxi, admin_id, admin_name)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [sana, carNumber.toUpperCase(), carType, diagnostika, narxi, adminId, adminName],
       function(err) {
@@ -36,7 +46,6 @@ function addCar(carNumber, carType, isDiagnosed, adminId, adminName) {
   });
 }
 
-// Avtomobilni tekshirish
 function checkCar(carNumber) {
   return new Promise((resolve, reject) => {
     db.get(
@@ -50,7 +59,6 @@ function checkCar(carNumber) {
   });
 }
 
-// Jami summa
 function getTotalSum() {
   return new Promise((resolve, reject) => {
     db.get(
@@ -63,7 +71,6 @@ function getTotalSum() {
   });
 }
 
-// So'nggi yozuvlar
 function getLastRecords(limit = 10) {
   return new Promise((resolve, reject) => {
     db.all(
@@ -77,7 +84,6 @@ function getLastRecords(limit = 10) {
   });
 }
 
-// Barcha avtomobillar
 function getAllCars() {
   return new Promise((resolve, reject) => {
     db.all(`SELECT * FROM avtomobillar ORDER BY id DESC`, (err, rows) => {
@@ -87,4 +93,13 @@ function getAllCars() {
   });
 }
 
-module.exports = { addCar, checkCar, getTotalSum, getLastRecords, getAllCars };
+function clearAll() {
+  return new Promise((resolve, reject) => {
+    db.run(`DELETE FROM avtomobillar`, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+module.exports = { addCar, checkCar, getTotalSum, getLastRecords, getAllCars, clearAll };
