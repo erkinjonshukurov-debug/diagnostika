@@ -1,3 +1,16 @@
+{
+  "name": "avtobot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "telegraf": "^4.12.2"
+  }
+}
