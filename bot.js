@@ -103,6 +103,61 @@ function getStats() {
     return { total: cars.length, diagnosed, notDiagnosed, totalSum };
 }
 
+// ============ KUZATUVCHI UCHUN IXCHAM JADVAL ============
+function getObserverLastRecords() {
+    const cars = loadData();
+    const last10 = cars.slice(-10).reverse();
+    
+    if (last10.length === 0) return "📋 Hali hech qanday ma'lumot yo‘q.";
+    
+    let result = "📋 *OXIRGI YOZUVLAR*\n\n";
+    result += "┌─────┬──────────┬──────────────┬────────┐\n";
+    result += "│ №   │ RAQAM    │ SANA         │ ADMIN  │\n";
+    result += "├─────┼──────────┼──────────────┼────────┤\n";
+    
+    last10.forEach((car, idx) => {
+        // Sanani qisqa formatga o‘tkazish (oy/kun)
+        let shortDate = car.sana.split(',')[0].trim();
+        let dateParts = shortDate.split('/');
+        if (dateParts.length >= 2) {
+            shortDate = `${dateParts[0]}/${dateParts[1]}`;
+        }
+        
+        // Raqamni qisqartirish
+        let raqam = car.raqam;
+        if (raqam.length > 8) raqam = raqam.slice(0, 8);
+        
+        // Admin ismini qisqartirish
+        let admin = car.admin_name;
+        if (admin.length > 6) admin = admin.slice(0, 6);
+        
+        result += `│ ${(idx+1).toString().padEnd(3)} │ ${raqam.padEnd(8)} │ ${shortDate.padEnd(12)} │ ${admin.padEnd(6)} │\n`;
+    });
+    
+    result += "└─────┴──────────┴──────────────┴────────┘\n\n";
+    
+    const totalStats = getTotalSum();
+    result += `🚗 *Jami:* ${cars.length} ta  |  💰 *Summa:* ${totalStats.total.toLocaleString()} so‘m`;
+    
+    return result;
+}
+
+// Admin uchun to'liq so'nggi yozuvlar
+function getAdminLastRecords() {
+    const cars = loadData();
+    const last10 = cars.slice(-10).reverse();
+    
+    if (last10.length === 0) return "📋 Hali hech qanday ma'lumot yo‘q.";
+    
+    let result = "📋 *OXIRGI 10 TA YOZUV*\n\n";
+    last10.forEach((car, idx) => {
+        result += `${idx+1}. *${car.raqam}* | ${car.turi} | ${car.diagnostika} | ${car.narxi.toLocaleString()} so‘m\n`;
+        result += `   📅 ${car.sana} | 👤 ${car.admin_name}\n\n`;
+    });
+    
+    return result;
+}
+
 // ============ BOT ============
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -136,55 +191,12 @@ function getMainMenu(ctx) {
             ['❌ Asosiy menyuni yopish']
         ]).resize();
     } else if (isObserver(ctx)) {
-        // KUZATUVCHI UCHUN SODDA MENYU
+        // KUZATUVCHI UCHUN SODDA MENYU (faqat 2 tugma)
         return Markup.keyboard([
             ['💰 Jami summa', '📋 So\'nggi yozuvlar']
         ]).resize();
     }
     return null;
-}
-
-// Kuzatuvchi uchun maxsus so'nggi yozuvlar (kim kiritgani + sana bilan)
-function getObserverLastRecords() {
-    const cars = loadData();
-    const last10 = cars.slice(-10).reverse();
-    
-    if (last10.length === 0) return "📋 Hali hech qanday ma'lumot yo‘q.";
-    
-    let result = "📋 *OXIRGI 10 TA YOZUV*\n\n";
-    result += "┌───────┬────────────┬────────────────────┬──────────┐\n";
-    result += "│  №    │   AVTO     │      SANA          │  ADMIN   │\n";
-    result += "├───────┼────────────┼────────────────────┼──────────┤\n";
-    
-    last10.forEach((car, idx) => {
-        const sana = car.sana.split(',')[0]; // Faqat sana qismi (oylik shakl)
-        const raqam = car.raqam;
-        const admin = car.admin_name.length > 8 ? car.admin_name.slice(0, 8) : car.admin_name;
-        
-        result += `│ ${(idx+1).toString().padEnd(5)} │ ${raqam.padEnd(10)} │ ${sana.padEnd(18)} │ ${admin.padEnd(8)} │\n`;
-    });
-    
-    result += "└───────┴────────────┴────────────────────┴──────────┘\n\n";
-    result += `📌 *Jami avtomobillar:* ${cars.length} ta\n`;
-    result += `💰 *Jami diagnostika summasi:* ${getTotalSum().total.toLocaleString()} so‘m`;
-    
-    return result;
-}
-
-// Admin uchun to'liq so'nggi yozuvlar
-function getAdminLastRecords() {
-    const cars = loadData();
-    const last10 = cars.slice(-10).reverse();
-    
-    if (last10.length === 0) return "📋 Hali hech qanday ma'lumot yo‘q.";
-    
-    let result = "📋 *OXIRGI 10 TA YOZUV*\n\n";
-    last10.forEach((car, idx) => {
-        result += `${idx+1}. *${car.raqam}* | ${car.turi} | ${car.diagnostika} | ${car.narxi.toLocaleString()} so‘m\n`;
-        result += `   📅 ${car.sana} | 👤 ${car.admin_name}\n\n`;
-    });
-    
-    return result;
 }
 
 // ============ REGISTRATSIYA (kuzatuvchi uchun) ============
