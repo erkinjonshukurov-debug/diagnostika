@@ -19,7 +19,6 @@ const DB_FILE = path.join(__dirname, 'cars.json');
 const OBSERVER_FILE = path.join(__dirname, 'observer.json');
 const RECEIVED_FILE = path.join(__dirname, 'received.json');
 
-// Boshlang'ich fayllar
 if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify([], null, 2));
 if (!fs.existsSync(OBSERVER_FILE)) fs.writeFileSync(OBSERVER_FILE, JSON.stringify({ userId: null }, null, 2));
 if (!fs.existsSync(RECEIVED_FILE)) fs.writeFileSync(RECEIVED_FILE, JSON.stringify({ total: 0, payments: [] }, null, 2));
@@ -44,7 +43,6 @@ function saveData(data) {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// Olingan summa funksiyalari
 function loadReceived() {
     try {
         return JSON.parse(fs.readFileSync(RECEIVED_FILE, 'utf8'));
@@ -57,30 +55,36 @@ function saveReceived(received) {
     fs.writeFileSync(RECEIVED_FILE, JSON.stringify(received, null, 2));
 }
 
+// Jami diagnostika summasi (o'zgarmas)
 function getTotalDiagnosedSum() {
     const cars = loadData();
     const diagnosedCars = cars.filter(car => car.diagnostika.includes('o‘tkazildi'));
     return diagnosedCars.reduce((sum, car) => sum + car.narxi, 0);
 }
 
+// Qoldiq summa (jami - olingan)
 function getRemainingAmount() {
     const total = getTotalDiagnosedSum();
     const received = loadReceived().total;
     return total - received;
 }
 
-function addPayment(amount, note = '') {
+// Olingan summaga qo'shish (qoldiqdan kamayadi)
+function addToReceived(amount, note = '') {
     const received = loadReceived();
     received.total += amount;
     received.payments.push({
         amount: amount,
         date: new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' }),
-        note: note
+        note: note,
+        remaining_after: getTotalDiagnosedSum() - received.total
     });
     saveReceived(received);
     return received.total;
 }
 
+// Olingan summani to'g'ridan-to'g'ri o'rnatish (emas, qo'shish kerak)
+// BU FUNKSIYA ISHLATILMAYDI - faqat qo'shish ishlaydi
 function setPaymentAmount(amount) {
     const received = loadReceived();
     received.total = amount;
@@ -131,7 +135,7 @@ function getStats() {
     const cars = loadData();
     const diagnosed = cars.filter(c => c.diagnostika.includes('o‘tkazildi')).length;
     const notDiagnosed = cars.filter(c => c.diagnostika.includes('o‘tkazilmadi')).length;
-    const totalSum = cars.reduce((s, c) => s + c.narxi, 0);
+    const totalSum = getTotalDiagnosedSum();
     const received = loadReceived().total;
     return { total: cars.length, diagnosed, notDiagnosed, totalSum, received, remaining: totalSum - received };
 }
@@ -239,21 +243,47 @@ bot.on('text', async (ctx) => {
         return ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
     }
     
-    // Olingan summa (Super Admin)
+    // Olingan summa qo'shish (Super Admin) - HAR GAL QO'SHILADI
     if (deleteStep?.step === 'received_amount' && isSuperAdmin(ctx)) {
         const amount = parseInt(text.replace(/[^0-9]/g, ''));
-        if (isNaN(amount)) {
+        if (isNaN(amount) || amount <= 0) {
             deleteSteps.delete(ctx.from.id);
-            return ctx.reply('❌ Noto‘g‘ri format! Faqat raqam kiriting.');
+            return ctx.reply('❌ Noto‘g‘ri format! Iltimos, musbat raqam kiriting.');
         }
-        setPaymentAmount(amount);
+        
         const total = getTotalDiagnosedSum();
-        const remaining = total - amount;
+        const currentReceived = loadReceived().total;
+        const newReceived = currentReceived + amount;
+        
+        // Agar olingan summa jami summadan oshib ketsa, xatolik
+        if (newReceived > total) {
+            return ctx.reply(
+                `❌ *Xato!* Olingan summa jami summadan oshib ketadi.\n\n` +
+                `💰 Jami summa: ${total.toLocaleString()} so‘m\n` +
+                `💵 Hozirgi olingan: ${currentReceived.toLocaleString()} so‘m\n` +
+                `📉 Maksimal olish mumkin: ${(total - currentReceived).toLocaleString()} so‘m`,
+                { parse_mode: 'Markdown' }
+            );
+        }
+        
+        // Yangi to'lovni qo'shish
+        const received = loadReceived();
+        received.total = newReceived;
+        received.payments.push({
+            amount: amount,
+            date: new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' }),
+            remaining_after: total - newReceived
+        });
+        saveReceived(received);
+        
+        const remaining = total - newReceived;
         deleteSteps.delete(ctx.from.id);
         return ctx.reply(
-            `✅ *Olingan summa yangilandi:* ${amount.toLocaleString()} so‘m\n\n` +
-            `💰 *Jami diagnostika summasi:* ${total.toLocaleString()} so‘m\n` +
-            `📉 *Qoldiq:* ${remaining.toLocaleString()} so‘m`,
+            `✅ *To‘lov qabul qilindi!*\n\n` +
+            `💵 Qo‘shilgan summa: ${amount.toLocaleString()} so‘m\n` +
+            `💰 Jami diagnostika summasi: ${total.toLocaleString()} so‘m\n` +
+            `💵 Olingan summa: ${newReceived.toLocaleString()} so‘m\n` +
+            `📉 Qoldiq summa: ${remaining.toLocaleString()} so‘m`,
             { parse_mode: 'Markdown' }
         );
     }
@@ -280,7 +310,7 @@ bot.on('text', async (ctx) => {
         const s = getStats();
         return ctx.reply(
             `📊 *STATISTIKA*\n\n` +
-            `🚗 *Jami:* ${s.total}\n` +
+            `🚗 *Jami avtomobillar:* ${s.total}\n` +
             `✅ *Diagnostika qilingan:* ${s.diagnosed}\n` +
             `❌ *Qilinmagan:* ${s.notDiagnosed}\n` +
             `💰 *Jami diagnostika summasi:* ${s.totalSum.toLocaleString()} so‘m\n` +
@@ -295,18 +325,25 @@ bot.on('text', async (ctx) => {
         const received = loadReceived().total;
         return ctx.reply(
             `💰 *JAMI DIAGNOSTIKA SUMMASI*\n\n` +
-            `• Jami: *${total.toLocaleString()}* so‘m\n` +
-            `• Olingan: *${received.toLocaleString()}* so‘m\n` +
+            `• Jami diagnostika summasi: *${total.toLocaleString()}* so‘m\n` +
+            `• Olingan summa: *${received.toLocaleString()}* so‘m\n` +
             `• Qoldiq: *${(total - received).toLocaleString()}* so‘m`,
             { parse_mode: 'Markdown' }
         );
     }
     
     if (text === '💵 Olingan summa' && isSuperAdmin(ctx)) {
+        const total = getTotalDiagnosedSum();
         const received = loadReceived().total;
+        const remaining = total - received;
         deleteSteps.set(ctx.from.id, { step: 'received_amount' });
         return ctx.reply(
-            `💵 *OLINGAN SUMMA*\n\nHozirgi: *${received.toLocaleString()}* so‘m\n\nYangi summani kiriting:`,
+            `💵 *TO‘LOV QABUL QILISH*\n\n` +
+            `💰 Jami diagnostika summasi: *${total.toLocaleString()}* so‘m\n` +
+            `💵 Hozirgi olingan summa: *${received.toLocaleString()}* so‘m\n` +
+            `📉 Qoldiq: *${remaining.toLocaleString()}* so‘m\n\n` +
+            `➕ Qancha summa qo‘shmoqchisiz?\n` +
+            `(Faqat raqam kiriting, masalan: 500000)`,
             { parse_mode: 'Markdown' }
         );
     }
