@@ -215,7 +215,7 @@ bot.on('text', async (ctx) => {
         return ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
     }
     
-    // Olingan summa qo'shish
+    // Olingan summa qo'shish (Super Admin)
     if (deleteStep?.step === 'received_amount' && isSuperAdmin(ctx)) {
         const amount = parseInt(text.replace(/[^0-9]/g, ''));
         if (isNaN(amount) || amount <= 0) {
@@ -237,24 +237,42 @@ bot.on('text', async (ctx) => {
             );
         }
         
+        const remaining = total - newReceived;
         const received = loadReceived();
         received.total = newReceived;
         received.payments.push({
             amount: amount,
             date: new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' }),
-            remaining_after: total - newReceived
+            remaining_after: remaining
         });
         saveReceived(received);
         
         deleteSteps.delete(ctx.from.id);
-        return ctx.reply(
+        
+        // Super Admin ga javob
+        await ctx.reply(
             `✅ *To‘lov qabul qilindi!*\n\n` +
             `💵 Qo‘shilgan: ${amount.toLocaleString()} so‘m\n` +
-            `💰 Jami: ${total.toLocaleString()} so‘m\n` +
-            `💵 Olingan: ${newReceived.toLocaleString()} so‘m\n` +
-            `📉 Qoldiq: ${(total - newReceived).toLocaleString()} so‘m`,
+            `💰 Jami diagnostika summasi: ${total.toLocaleString()} so‘m\n` +
+            `💵 Olingan summa: ${newReceived.toLocaleString()} so‘m\n` +
+            `📉 Qoldiq summa: ${remaining.toLocaleString()} so‘m`,
             { parse_mode: 'Markdown' }
         );
+        
+        // ============ KUZATUVCHIGA QOLDIQ SUMMA XABARI ============
+        if (registeredObserverId) {
+            await bot.telegram.sendMessage(registeredObserverId,
+                `💰 *TO‘LOV MA’LUMOTI*\n\n` +
+                `💵 *To‘lov miqdori:* ${amount.toLocaleString()} so‘m\n` +
+                `💵 *Olingan umumiy summa:* ${newReceived.toLocaleString()} so‘m\n` +
+                `📉 *Qoldiq summa:* ${remaining.toLocaleString()} so‘m\n` +
+                `👤 *Admin:* ${ctx.from.first_name}\n` +
+                `📅 *Sana:* ${new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' })}`,
+                { parse_mode: 'Markdown' }
+            );
+        }
+        
+        return;
     }
     
     // ============ MENYU TUGMALARI ============
@@ -292,11 +310,12 @@ bot.on('text', async (ctx) => {
     if (text === '💰 Jami summa') {
         const total = getTotalDiagnosedSum();
         const received = loadReceived().total;
+        const remaining = total - received;
         return ctx.reply(
             `💰 *JAMI DIAGNOSTIKA SUMMASI*\n\n` +
-            `• Jami: *${total.toLocaleString()}* so‘m\n` +
-            `• Olingan: *${received.toLocaleString()}* so‘m\n` +
-            `• Qoldiq: *${(total - received).toLocaleString()}* so‘m`,
+            `📊 *Jami diagnostika summasi:* ${total.toLocaleString()} so‘m\n` +
+            `💵 *Olingan summa:* ${received.toLocaleString()} so‘m\n` +
+            `📉 *Qoldiq:* ${remaining.toLocaleString()} so‘m`,
             { parse_mode: 'Markdown' }
         );
     }
@@ -304,13 +323,15 @@ bot.on('text', async (ctx) => {
     if (text === '💵 Olingan summa' && isSuperAdmin(ctx)) {
         const total = getTotalDiagnosedSum();
         const received = loadReceived().total;
+        const remaining = total - received;
         deleteSteps.set(ctx.from.id, { step: 'received_amount' });
         return ctx.reply(
             `💵 *TO‘LOV QABUL QILISH*\n\n` +
-            `💰 Jami: *${total.toLocaleString()}* so‘m\n` +
-            `💵 Olingan: *${received.toLocaleString()}* so‘m\n` +
-            `📉 Qoldiq: *${(total - received).toLocaleString()}* so‘m\n\n` +
-            `➕ Qancha summa qo‘shmoqchisiz?`,
+            `💰 Jami diagnostika summasi: *${total.toLocaleString()}* so‘m\n` +
+            `💵 Hozirgi olingan summa: *${received.toLocaleString()}* so‘m\n` +
+            `📉 Qoldiq: *${remaining.toLocaleString()}* so‘m\n\n` +
+            `➕ Qancha summa qo‘shmoqchisiz?\n` +
+            `(Faqat raqam kiriting, masalan: 500000)`,
             { parse_mode: 'Markdown' }
         );
     }
@@ -391,14 +412,20 @@ bot.action(/diag_yes_(.+)_(.+)/, async (ctx) => {
         { parse_mode: 'Markdown' }
     );
     
-    // KUZATUVCHIGA XABAR (avtomobil turi bilan)
+    // KUZATUVCHIGA XABAR
     if (registeredObserverId) {
+        const total = getTotalDiagnosedSum();
+        const received = loadReceived().total;
+        const remaining = total - received;
         await bot.telegram.sendMessage(registeredObserverId,
             `🔔 *Yangi diagnostika!*\n\n` +
             `🚗 *Raqam:* ${carNumber}\n` +
             `🏷️ *Turi:* ${carType}\n` +
             `💰 *Summa:* ${DIAGNOSIS_PRICE.toLocaleString()} so‘m\n` +
-            `👤 *Admin:* ${ctx.from.first_name}`,
+            `👤 *Admin:* ${ctx.from.first_name}\n\n` +
+            `📊 *JAMI SUM:* ${total.toLocaleString()} so‘m\n` +
+            `💵 *OLINGAN:* ${received.toLocaleString()} so‘m\n` +
+            `📉 *QOLDIQ:* ${remaining.toLocaleString()} so‘m`,
             { parse_mode: 'Markdown' }
         );
     }
