@@ -8,7 +8,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 
 const SUPER_ADMIN_ID = 1437230485;
 const ADMIN2_ID = 987654321;
-const OBSERVER_PHONE = '+998902247888';
+const OBSERVER_PHONE = '+998915425700';  // YANGI KUZATUVCHI RAQAMI
 let registeredObserverId = null;
 
 const ADMIN_IDS = [SUPER_ADMIN_ID, ADMIN2_ID];
@@ -173,7 +173,9 @@ function getStats() {
     const totalSum = getTotalDiagnosedSum();
     const paidSum = getPaidSum();
     const remainingSum = totalSum - paidSum;
-    return { total: cars.length, diagnosed, notDiagnosed, totalSum, paidSum, remainingSum };
+    const paidCars = getPaidCarsList();
+    const paidCarsCount = paidCars.length;
+    return { total: cars.length, diagnosed, notDiagnosed, totalSum, paidSum, remainingSum, paidCarsCount };
 }
 
 function getAllCars() {
@@ -372,9 +374,6 @@ bot.action(/toggle_car_(.+)_(.+)_(.+)/, async (ctx) => {
     if (!isSuperAdmin(ctx)) return;
     
     const carNumber = ctx.match[1];
-    const carType = ctx.match[2];
-    const amount = parseInt(ctx.match[3]);
-    
     const userSelection = selectedCars.get(ctx.from.id);
     if (!userSelection) return;
     
@@ -525,7 +524,8 @@ bot.on('text', async (ctx) => {
             `📊 *STATISTIKA*\n\n` +
             `🚗 *Jami avtomobillar:* ${s.total}\n` +
             `✅ *Diagnostika qilingan:* ${s.diagnosed}\n` +
-            `❌ *Qilinmagan:* ${s.notDiagnosed}\n\n` +
+            `❌ *Qilinmagan:* ${s.notDiagnosed}\n` +
+            `💵 *Tasdiqlangan avtomobillar:* ${s.paidCarsCount} ta\n\n` +
             `💰 *Jami diagnostika summasi:* ${s.totalSum.toLocaleString()} so‘m\n` +
             `💵 *To‘lov qilingan summa:* ${s.paidSum.toLocaleString()} so‘m\n` +
             `📉 *Qolgan qoldiq:* ${s.remainingSum.toLocaleString()} so‘m`,
@@ -691,7 +691,9 @@ bot.on('document', async (ctx) => {
 bot.launch();
 console.log('🤖 Bot ishga tushdi!');
 console.log(`👑 Super Admin ID: ${SUPER_ADMIN_ID}`);
+console.log(`📞 Kuzatuvchi telefoni: ${OBSERVER_PHONE}`);
 console.log(`🚗 Avtomobil turlari: ${CAR_TYPES.join(', ')}`);
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
+    
