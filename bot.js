@@ -73,10 +73,6 @@ function getTotalDiagnosedSum() {
     return diagnosedCars.reduce((sum, car) => sum + car.narxi, 0);
 }
 
-function getRemainingAmount() {
-    return getTotalDiagnosedSum() - loadReceived().total;
-}
-
 function addCar(carNumber, carType, isDiagnosed, adminId, adminName) {
     const cars = loadData();
     const sana = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
@@ -205,7 +201,6 @@ bot.on('text', async (ctx) => {
         step.step = 'waiting_for_type';
         addSteps.set(ctx.from.id, step);
         
-        // Avtomobil turini variantlarda chiqarish
         return ctx.reply(
             `✅ Raqam: ${step.carNumber}\n\n*Avtomobil turini tanlang:*`,
             { parse_mode: 'Markdown', ...getCarTypeKeyboard() }
@@ -395,9 +390,16 @@ bot.action(/diag_yes_(.+)_(.+)/, async (ctx) => {
         `🚗 ${carNumber}\n🏷️ ${carType}\n✅ Diagnostika o‘tkazildi\n💰 ${DIAGNOSIS_PRICE.toLocaleString()} so‘m`,
         { parse_mode: 'Markdown' }
     );
+    
+    // KUZATUVCHIGA XABAR (avtomobil turi bilan)
     if (registeredObserverId) {
         await bot.telegram.sendMessage(registeredObserverId,
-            `🔔 *Yangi diagnostika!*\n🚗 ${carNumber}\n💰 ${DIAGNOSIS_PRICE.toLocaleString()} so‘m`
+            `🔔 *Yangi diagnostika!*\n\n` +
+            `🚗 *Raqam:* ${carNumber}\n` +
+            `🏷️ *Turi:* ${carType}\n` +
+            `💰 *Summa:* ${DIAGNOSIS_PRICE.toLocaleString()} so‘m\n` +
+            `👤 *Admin:* ${ctx.from.first_name}`,
+            { parse_mode: 'Markdown' }
         );
     }
     await ctx.answerCbQuery();
