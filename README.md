@@ -1,0 +1,2 @@
+# diagnostika
+avtomashinalarni diagnostika qilish
