@@ -689,7 +689,6 @@ bot.action('close_paid', async (ctx) => {
 
 // ============ TO'LOVNI TASDIQLASH (KO'P TANLASH VA SAHIFALAR ORASIDA O'TISH) ============
 let selectedCars = new Map();
-let currentMessageId = new Map();
 
 async function showUnpaidCars(ctx, page = 0) {
     const unpaidCars = getUnpaidCars();
@@ -700,27 +699,23 @@ async function showUnpaidCars(ctx, page = 0) {
     
     const itemsPerPage = 5;
     const totalPages = Math.ceil(unpaidCars.length / itemsPerPage);
-    let currentPage = page;
-    if (currentPage < 0) currentPage = 0;
-    if (currentPage >= totalPages) currentPage = totalPages - 1;
+    let currentPage = Math.max(0, Math.min(page, totalPages - 1));
     
     const start = currentPage * itemsPerPage;
     const end = Math.min(start + itemsPerPage, unpaidCars.length);
     const pageCars = unpaidCars.slice(start, end);
     
     if (!selectedCars.has(ctx.from.id)) {
-        selectedCars.set(ctx.from.id, { selected: new Set(), currentPage: currentPage });
+        selectedCars.set(ctx.from.id, new Set());
     }
     const userSelection = selectedCars.get(ctx.from.id);
-    userSelection.currentPage = currentPage;
-    selectedCars.set(ctx.from.id, userSelection);
     
     let message = '💰 *TO‘LOV QILINMAGAN AVTOMOBILLAR*\n\n';
     message += `📄 *Sahifa ${currentPage + 1}/${totalPages}* | Jami: ${unpaidCars.length} ta\n\n`;
     
     pageCars.forEach((car, idx) => {
         const globalIdx = start + idx + 1;
-        const isSelected = userSelection.selected.has(car.raqam);
+        const isSelected = userSelection.has(car.raqam);
         const checkbox = isSelected ? '☑️' : '⬜';
         message += `${checkbox} *${globalIdx}.* ${car.raqam} | ${car.turi} | ${car.narxi.toLocaleString()} so‘m`;
         if (car.extra_works && car.extra_works.length > 0) {
@@ -731,9 +726,9 @@ async function showUnpaidCars(ctx, page = 0) {
     
     const remainingSum = unpaidCars.reduce((s, c) => s + c.narxi, 0);
     message += `\n📊 *Jami to‘lov qilinmagan:* ${remainingSum.toLocaleString()} so‘m`;
-    message += `\n✅ *Tanlanganlar:* ${userSelection.selected.size} ta`;
+    message += `\n✅ *Tanlanganlar:* ${userSelection.size} ta`;
     
-    // Navigatsiya tugmalari
+    // Sahifalash tugmalari
     const navButtons = [];
     if (currentPage > 0) {
         navButtons.push(Markup.button.callback('◀️ Oldingi', `unpaid_page_${currentPage - 1}`));
@@ -742,28 +737,28 @@ async function showUnpaidCars(ctx, page = 0) {
         navButtons.push(Markup.button.callback('Keyingi ▶️', `unpaid_page_${currentPage + 1}`));
     }
     
-    // Avtomobil tanlash tugmalari
+    // Avtomobil tanlash tugmalari - 3 qator qilib
     const selectButtons = [];
     pageCars.forEach((car) => {
-        const isSelected = userSelection.selected.has(car.raqam);
+        const isSelected = userSelection.has(car.raqam);
         selectButtons.push([
             Markup.button.callback(
                 `${isSelected ? '❌' : '✅'} ${car.raqam}`,
-                `toggle_car_${car.raqam}_${car.turi}_${car.narxi}`
+                `toggle_car_${car.raqam}`
             )
         ]);
     });
     
     // To'lov qilingan avtomobillarni ko'rish tugmasi
     const paidButton = [];
-    const paidCars = getPaidCarsList();
-    if (paidCars.length > 0) {
-        paidButton.push([Markup.button.callback(`✅ To‘langanlar (${paidCars.length} ta)`, 'view_paid_cars')]);
+    const paidCarsCount = getPaidCarsList().length;
+    if (paidCarsCount > 0) {
+        paidButton.push([Markup.button.callback(`✅ To‘langanlar (${paidCarsCount} ta)`, 'view_paid_cars')]);
     }
     
     const actionButtons = [];
-    if (userSelection.selected.size > 0) {
-        actionButtons.push([Markup.button.callback(`✅ Tasdiqlash (${userSelection.selected.size} ta)`, 'confirm_payment')]);
+    if (userSelection.size > 0) {
+        actionButtons.push([Markup.button.callback(`✅ Tasdiqlash (${userSelection.size} ta)`, 'confirm_payment')]);
     }
     actionButtons.push([Markup.button.callback('❌ Bekor qilish', 'cancel_payment')]);
     
@@ -772,147 +767,39 @@ async function showUnpaidCars(ctx, page = 0) {
     allButtons.push(...paidButton);
     allButtons.push(...actionButtons);
     
-    // Xabarni yuborish yoki yangilash
-    const msg = await ctx.reply(message, {
+    await ctx.reply(message, {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard(allButtons)
     });
-    currentMessageId.set(ctx.from.id, msg.message_id);
 }
 
-// Sahifalash (to'lov qilinmagan) - MUHIM QISM
+// Sahifalash (to'lov qilinmagan)
 bot.action(/unpaid_page_(\d+)/, async (ctx) => {
-    if (!isSuperAdminById(ctx)) {
-        await ctx.answerCbQuery('Ruxsat yo‘q');
-        return;
-    }
+    if (!isSuperAdminById(ctx)) return;
     const page = parseInt(ctx.match[1]);
-    // Eski xabarni o'chirish
-    try {
-        await ctx.deleteMessage();
-    } catch(e) {}
-    // Yangi sahifani ko'rsatish
+    await ctx.deleteMessage();
     await showUnpaidCars(ctx, page);
     await ctx.answerCbQuery();
 });
 
-// ============ TO'LOV QILINGAN AVTOMOBILLARNI KO'RISH (INLINE) ============
-async function showPaidCarsInline(ctx, page = 0) {
-    const paidCars = getPaidCarsList();
-    
-    if (paidCars.length === 0) {
-        await ctx.answerCbQuery('📋 Hali hech qanday to‘lov tasdiqlanmagan');
-        return;
-    }
-    
-    const itemsPerPage = 5;
-    const totalPages = Math.ceil(paidCars.length / itemsPerPage);
-    let currentPage = page;
-    if (currentPage < 0) currentPage = 0;
-    if (currentPage >= totalPages) currentPage = totalPages - 1;
-    
-    const start = currentPage * itemsPerPage;
-    const end = Math.min(start + itemsPerPage, paidCars.length);
-    const pageCars = paidCars.slice(start, end);
-    
-    let message = '✅ *TO‘LOV QILINGAN AVTOMOBILLAR*\n\n';
-    message += `📄 *Sahifa ${currentPage + 1}/${totalPages}* | Jami: ${paidCars.length} ta\n\n`;
-    
-    pageCars.forEach((car, idx) => {
-        const num = start + idx + 1;
-        const sana = car.paid_date.split(',')[0];
-        message += `${num}. *${car.raqam}* | ${car.turi} | ${car.total_amount.toLocaleString()} so‘m\n`;
-        message += `   📅 ${sana} | 👤 ${car.admin_name}\n\n`;
-    });
-    
-    const totalPaidSum = getPaidSum();
-    message += `💰 *Jami to‘lov summa:* ${totalPaidSum.toLocaleString()} so‘m`;
-    
-    const navButtons = [];
-    if (currentPage > 0) {
-        navButtons.push(Markup.button.callback('◀️ Oldingi', `paid_cars_page_${currentPage - 1}`));
-    }
-    if (currentPage + 1 < totalPages) {
-        navButtons.push(Markup.button.callback('Keyingi ▶️', `paid_cars_page_${currentPage + 1}`));
-    }
-    navButtons.push(Markup.button.callback('🔙 To‘lov qilinmaganlarga qaytish', 'back_to_unpaid'));
-    navButtons.push(Markup.button.callback('❌ Yopish', 'close_paid_inline'));
-    
-    await ctx.reply(message, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([navButtons])
-    });
-    await ctx.answerCbQuery();
-}
-
-// To'lov qilingan avtomobillarni ko'rish (inline tugma)
-bot.action('view_paid_cars', async (ctx) => {
-    await showPaidCarsInline(ctx, 0);
-});
-
-// To'lov qilingan avtomobillar sahifalari
-bot.action(/paid_cars_page_(\d+)/, async (ctx) => {
-    const page = parseInt(ctx.match[1]);
-    await ctx.deleteMessage();
-    await showPaidCarsInline(ctx, page);
-    await ctx.answerCbQuery();
-});
-
-// To'lov qilinmaganlarga qaytish
-bot.action('back_to_unpaid', async (ctx) => {
-    await ctx.deleteMessage();
-    const userSelection = selectedCars.get(ctx.from.id);
-    const currentPage = userSelection?.currentPage || 0;
-    await showUnpaidCars(ctx, currentPage);
-    await ctx.answerCbQuery();
-});
-
-// To'lov qilingan avtomobillarni yopish (inline)
-bot.action('close_paid_inline', async (ctx) => {
-    await ctx.deleteMessage();
-    await ctx.answerCbQuery();
-});
-
 // Avtomobil tanlash/o'chirish
-bot.action(/toggle_car_(.+)_(.+)_(.+)/, async (ctx) => {
+bot.action(/toggle_car_(.+)/, async (ctx) => {
     if (!isSuperAdminById(ctx)) return;
     const carNumber = ctx.match[1];
     const userSelection = selectedCars.get(ctx.from.id);
     if (!userSelection) return;
     
-    if (userSelection.selected.has(carNumber)) {
-        userSelection.selected.delete(carNumber);
+    if (userSelection.has(carNumber)) {
+        userSelection.delete(carNumber);
     } else {
-        userSelection.selected.add(carNumber);
+        userSelection.add(carNumber);
     }
     selectedCars.set(ctx.from.id, userSelection);
     
-    const unpaidCars = getUnpaidCars();
-    const itemsPerPage = 5;
-    const page = userSelection.currentPage || 0;
-    const start = page * itemsPerPage;
-    const pageCars = unpaidCars.slice(start, start + itemsPerPage);
-    const totalPages = Math.ceil(unpaidCars.length / itemsPerPage);
-    
-    let message = '💰 *TO‘LOV QILINMAGAN AVTOMOBILLAR*\n\n';
-    message += `📄 *Sahifa ${page + 1}/${totalPages}* | Jami: ${unpaidCars.length} ta\n\n`;
-    
-    pageCars.forEach((car, idx) => {
-        const globalIdx = start + idx + 1;
-        const isSelected = userSelection.selected.has(car.raqam);
-        const checkbox = isSelected ? '☑️' : '⬜';
-        message += `${checkbox} *${globalIdx}.* ${car.raqam} | ${car.turi} | ${car.narxi.toLocaleString()} so‘m`;
-        if (car.extra_works && car.extra_works.length > 0) {
-            message += ` (+${(car.extra_amount || 0).toLocaleString()} so‘m)`;
-        }
-        message += `\n`;
-    });
-    
-    const remainingSum = unpaidCars.reduce((s, c) => s + c.narxi, 0);
-    message += `\n📊 *Jami to‘lov qilinmagan:* ${remainingSum.toLocaleString()} so‘m`;
-    message += `\n✅ *Tanlanganlar:* ${userSelection.selected.size} ta`;
-    
-    await ctx.editMessageText(message, { parse_mode: 'Markdown' });
+    // Joriy xabarni yangilash kerak, lekin yangi xabar yuboramiz
+    const currentPage = 0; // Foydalanuvchi qaysi sahifada ekanligini bilish qiyin, shuning uchun 1-sahifaga qaytamiz
+    await ctx.deleteMessage();
+    await showUnpaidCars(ctx, currentPage);
     await ctx.answerCbQuery();
 });
 
@@ -921,13 +808,13 @@ bot.action('confirm_payment', async (ctx) => {
     if (!isSuperAdminById(ctx)) return;
     
     const userSelection = selectedCars.get(ctx.from.id);
-    if (!userSelection || userSelection.selected.size === 0) {
+    if (!userSelection || userSelection.size === 0) {
         await ctx.answerCbQuery('Hech qanday avtomobil tanlanmagan!');
         return;
     }
     
     const unpaidCars = getUnpaidCars();
-    const carsToPay = unpaidCars.filter(car => userSelection.selected.has(car.raqam));
+    const carsToPay = unpaidCars.filter(car => userSelection.has(car.raqam));
     const totalAmount = carsToPay.reduce((sum, car) => sum + car.narxi, 0);
     
     addMultiplePaidCars(carsToPay, ctx.from.first_name);
@@ -976,6 +863,75 @@ bot.action('cancel_payment', async (ctx) => {
     selectedCars.delete(ctx.from.id);
     await ctx.editMessageText('❌ Bekor qilindi');
     await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
+    await ctx.answerCbQuery();
+});
+
+// ============ TO'LOV QILINGAN AVTOMOBILLARNI KO'RISH ============
+async function showPaidCarsInline(ctx, page = 0) {
+    const paidCars = getPaidCarsList();
+    
+    if (paidCars.length === 0) {
+        await ctx.answerCbQuery('📋 Hali hech qanday to‘lov tasdiqlanmagan');
+        return;
+    }
+    
+    const itemsPerPage = 5;
+    const totalPages = Math.ceil(paidCars.length / itemsPerPage);
+    let currentPage = Math.max(0, Math.min(page, totalPages - 1));
+    
+    const start = currentPage * itemsPerPage;
+    const end = Math.min(start + itemsPerPage, paidCars.length);
+    const pageCars = paidCars.slice(start, end);
+    
+    let message = '✅ *TO‘LOV QILINGAN AVTOMOBILLAR*\n\n';
+    message += `📄 *Sahifa ${currentPage + 1}/${totalPages}* | Jami: ${paidCars.length} ta\n\n`;
+    
+    pageCars.forEach((car, idx) => {
+        const num = start + idx + 1;
+        const sana = car.paid_date.split(',')[0];
+        message += `${num}. *${car.raqam}* | ${car.turi} | ${car.total_amount.toLocaleString()} so‘m\n`;
+        message += `   📅 ${sana} | 👤 ${car.admin_name}\n\n`;
+    });
+    
+    const totalPaidSum = getPaidSum();
+    message += `💰 *Jami to‘lov summa:* ${totalPaidSum.toLocaleString()} so‘m`;
+    
+    const navButtons = [];
+    if (currentPage > 0) {
+        navButtons.push(Markup.button.callback('◀️ Oldingi', `paid_cars_page_${currentPage - 1}`));
+    }
+    if (currentPage + 1 < totalPages) {
+        navButtons.push(Markup.button.callback('Keyingi ▶️', `paid_cars_page_${currentPage + 1}`));
+    }
+    navButtons.push(Markup.button.callback('🔙 To‘lov qilinmaganlarga qaytish', 'back_to_unpaid'));
+    navButtons.push(Markup.button.callback('❌ Yopish', 'close_paid_inline'));
+    
+    await ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([navButtons])
+    });
+    await ctx.answerCbQuery();
+}
+
+bot.action('view_paid_cars', async (ctx) => {
+    await showPaidCarsInline(ctx, 0);
+});
+
+bot.action(/paid_cars_page_(\d+)/, async (ctx) => {
+    const page = parseInt(ctx.match[1]);
+    await ctx.deleteMessage();
+    await showPaidCarsInline(ctx, page);
+    await ctx.answerCbQuery();
+});
+
+bot.action('back_to_unpaid', async (ctx) => {
+    await ctx.deleteMessage();
+    await showUnpaidCars(ctx, 0);
+    await ctx.answerCbQuery();
+});
+
+bot.action('close_paid_inline', async (ctx) => {
+    await ctx.deleteMessage();
     await ctx.answerCbQuery();
 });
 
