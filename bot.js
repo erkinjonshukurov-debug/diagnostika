@@ -696,13 +696,16 @@ async function showUnpaidCars(ctx, page = 0) {
     
     const itemsPerPage = 5;
     const totalPages = Math.ceil(unpaidCars.length / itemsPerPage);
-    const currentPage = Math.min(page, totalPages - 1);
+    let currentPage = page;
+    if (currentPage < 0) currentPage = 0;
+    if (currentPage >= totalPages) currentPage = totalPages - 1;
+    
     const start = currentPage * itemsPerPage;
     const end = Math.min(start + itemsPerPage, unpaidCars.length);
     const pageCars = unpaidCars.slice(start, end);
     
     if (!selectedCars.has(ctx.from.id)) {
-        selectedCars.set(ctx.from.id, { selected: new Set(), messageId: null, currentPage: 0 });
+        selectedCars.set(ctx.from.id, { selected: new Set(), messageId: null, currentPage: currentPage });
     }
     const userSelection = selectedCars.get(ctx.from.id);
     userSelection.currentPage = currentPage;
@@ -789,19 +792,33 @@ async function showUnpaidCars(ctx, page = 0) {
     }
 }
 
+// Sahifalash (to'lov qilinmagan)
+bot.action(/unpaid_page_(\d+)/, async (ctx) => {
+    if (!isSuperAdminById(ctx)) {
+        await ctx.answerCbQuery('Ruxsat yo‘q');
+        return;
+    }
+    const page = parseInt(ctx.match[1]);
+    console.log(`Sahifa o'tish: ${page}`);
+    await showUnpaidCars(ctx, page);
+    await ctx.answerCbQuery();
+});
+
 // ============ TO'LOV QILINGAN AVTOMOBILLARNI KO'RISH (INLINE) ============
 async function showPaidCarsInline(ctx, page = 0) {
     const paidCars = getPaidCarsList();
     
     if (paidCars.length === 0) {
-        // Xatolik bermasdan, faqat xabar ko'rsatish
         await ctx.answerCbQuery('📋 Hali hech qanday to‘lov tasdiqlanmagan');
         return;
     }
     
     const itemsPerPage = 5;
     const totalPages = Math.ceil(paidCars.length / itemsPerPage);
-    const currentPage = Math.min(page, totalPages - 1);
+    let currentPage = page;
+    if (currentPage < 0) currentPage = 0;
+    if (currentPage >= totalPages) currentPage = totalPages - 1;
+    
     const start = currentPage * itemsPerPage;
     const end = Math.min(start + itemsPerPage, paidCars.length);
     const pageCars = paidCars.slice(start, end);
@@ -819,7 +836,6 @@ async function showPaidCarsInline(ctx, page = 0) {
     const totalPaidSum = getPaidSum();
     message += `💰 *Jami to‘lov summa:* ${totalPaidSum.toLocaleString()} so‘m`;
     
-    // Navigatsiya tugmalari
     const navButtons = [];
     if (currentPage > 0) {
         navButtons.push(Markup.button.callback('◀️ Oldingi', `paid_cars_page_${currentPage - 1}`));
@@ -860,6 +876,7 @@ bot.action('view_paid_cars', async (ctx) => {
 // To'lov qilingan avtomobillar sahifalari
 bot.action(/paid_cars_page_(\d+)/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
+    console.log(`To'langanlar sahifasi: ${page}`);
     await showPaidCarsInline(ctx, page);
 });
 
@@ -873,14 +890,6 @@ bot.action('back_to_unpaid', async (ctx) => {
 // To'lov qilingan avtomobillarni yopish (inline)
 bot.action('close_paid_inline', async (ctx) => {
     await ctx.deleteMessage();
-    await ctx.answerCbQuery();
-});
-
-// Sahifalash (to'lov qilinmagan)
-bot.action(/unpaid_page_(\d+)/, async (ctx) => {
-    if (!isSuperAdminById(ctx)) return;
-    const page = parseInt(ctx.match[1]);
-    await showUnpaidCars(ctx, page);
     await ctx.answerCbQuery();
 });
 
