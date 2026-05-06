@@ -794,7 +794,8 @@ async function showPaidCarsInline(ctx, page = 0) {
     const paidCars = getPaidCarsList();
     
     if (paidCars.length === 0) {
-        await ctx.answerCbQuery('📋 Hali hech qanday to‘lov tasdiqlanmagan.');
+        // Xatolik bermasdan, faqat xabar ko'rsatish
+        await ctx.answerCbQuery('📋 Hali hech qanday to‘lov tasdiqlanmagan');
         return;
     }
     
