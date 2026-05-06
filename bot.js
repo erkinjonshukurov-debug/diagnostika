@@ -7,8 +7,8 @@ const path = require('path');
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
 // ADMIN TELEFON RAQAMLARI
-const SUPER_ADMIN_PHONE = '+998957978509';  // SIZ (SUPER ADMIN)
-const ADMIN_PHONES = ['+998957978509', '+998979247888']; // Super admin va boshqa admin
+const SUPER_ADMIN_PHONE = '+998957978509';
+const ADMIN_PHONES = ['+998957978509', '+998979247888'];
 
 // KUZATUVCHI TELEFON RAQAMLARI
 const OBSERVER_PHONES = ['+998915425700', '+998902247888', '998915425700', '998902247888'];
@@ -71,19 +71,6 @@ function isValidPlate(plate) {
 
 function getCarTypeKeyboard() {
     const buttons = CAR_TYPES.map(type => [Markup.button.callback(type, `car_type_${type}`)]);
-    buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel_edit')]);
-    return Markup.inlineKeyboard(buttons);
-}
-
-function getExtraWorkKeyboard(selectedWorks = []) {
-    const buttons = EXTRA_WORKS.map(work => {
-        const isSelected = selectedWorks.includes(work);
-        return [Markup.button.callback(
-            `${isSelected ? '☑️' : '⬜'} ${work}`,
-            `edit_extra_${work.replace(/\s/g, '_')}`
-        )];
-    });
-    buttons.push([Markup.button.callback('✅ Tugatish', 'finish_edit_extra')]);
     buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel_edit')]);
     return Markup.inlineKeyboard(buttons);
 }
@@ -477,7 +464,6 @@ bot.action(/edit_extra_(.+)/, async (ctx) => {
     if (!editData || editData.step !== 'edit_extra') return;
     
     const work = ctx.match[1].replace(/_/g, ' ');
-    const car = findCarByNumber(editData.carNumber);
     const currentWorks = editData.currentExtra || [];
     
     if (currentWorks.includes(work)) {
@@ -490,6 +476,7 @@ bot.action(/edit_extra_(.+)/, async (ctx) => {
     editData.currentExtra = currentWorks;
     editSteps.set(ctx.from.id, editData);
     
+    const car = findCarByNumber(editData.carNumber);
     let message = `✏️ *QO‘SHIMCHA ISHLARNI TAHRIRLASH*\n\n`;
     message += `🚗 Avtomobil: ${car.raqam}\n`;
     message += `💰 Asosiy narx: ${BASE_PRICE.toLocaleString()} so‘m\n\n`;
@@ -586,8 +573,6 @@ bot.action('cancel_edit', async (ctx) => {
 });
 
 // ============ AVTOMOBILLAR RO'YXATI ============
-let currentPage = new Map();
-
 async function showAllCars(ctx, page = 0) {
     const cars = getAllCars();
     
@@ -645,7 +630,7 @@ bot.action('close_cars', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ TASDIQLANGAN AVTOMOBILLAR ============
+// ============ TASDIQLANGAN AVTOMOBILLAR (ASOSIY MENYU UCHUN) ============
 async function showPaidCars(ctx, page = 0) {
     const paidCars = getPaidCarsList();
     
@@ -699,7 +684,7 @@ bot.action('close_paid', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ TO'LOVNI TASDIQLASH ============
+// ============ TO'LOVNI TASDIQLASH (KO'P TANLASH VA SAHIFALAR ORASIDA O'TISH) ============
 let selectedCars = new Map();
 
 async function showUnpaidCars(ctx, page = 0) {
@@ -711,31 +696,46 @@ async function showUnpaidCars(ctx, page = 0) {
     
     const itemsPerPage = 5;
     const totalPages = Math.ceil(unpaidCars.length / itemsPerPage);
-    const start = page * itemsPerPage;
-    const end = start + itemsPerPage;
+    const currentPage = Math.min(page, totalPages - 1);
+    const start = currentPage * itemsPerPage;
+    const end = Math.min(start + itemsPerPage, unpaidCars.length);
     const pageCars = unpaidCars.slice(start, end);
     
     if (!selectedCars.has(ctx.from.id)) {
-        selectedCars.set(ctx.from.id, { selected: new Set(), messageId: null });
+        selectedCars.set(ctx.from.id, { selected: new Set(), messageId: null, currentPage: 0 });
     }
     const userSelection = selectedCars.get(ctx.from.id);
+    userSelection.currentPage = currentPage;
+    selectedCars.set(ctx.from.id, userSelection);
     
     let message = '💰 *TO‘LOV QILINMAGAN AVTOMOBILLAR*\n\n';
+    message += `📄 *Sahifa ${currentPage + 1}/${totalPages}* | Jami: ${unpaidCars.length} ta\n\n`;
     
     pageCars.forEach((car, idx) => {
+        const globalIdx = start + idx + 1;
         const isSelected = userSelection.selected.has(car.raqam);
         const checkbox = isSelected ? '☑️' : '⬜';
-        message += `${checkbox} ${start + idx + 1}. *${car.raqam}* | ${car.turi} | ${car.narxi.toLocaleString()} so‘m`;
+        message += `${checkbox} *${globalIdx}.* ${car.raqam} | ${car.turi} | ${car.narxi.toLocaleString()} so‘m`;
         if (car.extra_works && car.extra_works.length > 0) {
             message += ` (+${(car.extra_amount || 0).toLocaleString()} so‘m)`;
         }
         message += `\n`;
     });
     
-    message += `\n📊 *Jami to‘lov qilinmagan:* ${unpaidCars.reduce((s, c) => s + c.narxi, 0).toLocaleString()} so‘m`;
+    const remainingSum = unpaidCars.reduce((s, c) => s + c.narxi, 0);
+    message += `\n📊 *Jami to‘lov qilinmagan:* ${remainingSum.toLocaleString()} so‘m`;
     message += `\n✅ *Tanlanganlar:* ${userSelection.selected.size} ta`;
-    message += `\n📄 *Sahifa:* ${page + 1}/${totalPages}`;
     
+    // Navigatsiya tugmalari
+    const navButtons = [];
+    if (currentPage > 0) {
+        navButtons.push(Markup.button.callback('◀️ Oldingi', `unpaid_page_${currentPage - 1}`));
+    }
+    if (currentPage + 1 < totalPages) {
+        navButtons.push(Markup.button.callback('Keyingi ▶️', `unpaid_page_${currentPage + 1}`));
+    }
+    
+    // Avtomobil tanlash tugmalari
     const selectButtons = [];
     pageCars.forEach((car) => {
         const isSelected = userSelection.selected.has(car.raqam);
@@ -747,12 +747,11 @@ async function showUnpaidCars(ctx, page = 0) {
         ]);
     });
     
-    const navButtons = [];
-    if (page > 0) {
-        navButtons.push(Markup.button.callback('◀️ Oldingi', `unpaid_page_${page - 1}`));
-    }
-    if (end < unpaidCars.length) {
-        navButtons.push(Markup.button.callback('Keyingi ▶️', `unpaid_page_${page + 1}`));
+    // To'lov qilingan avtomobillarni ko'rish tugmasi
+    const paidButton = [];
+    const paidCars = getPaidCarsList();
+    if (paidCars.length > 0) {
+        paidButton.push([Markup.button.callback(`✅ To‘langanlar (${paidCars.length} ta)`, 'view_paid_cars')]);
     }
     
     const actionButtons = [];
@@ -763,18 +762,120 @@ async function showUnpaidCars(ctx, page = 0) {
     
     const allButtons = [...selectButtons];
     if (navButtons.length > 0) allButtons.push(navButtons);
+    allButtons.push(...paidButton);
     allButtons.push(...actionButtons);
     
-    const sentMessage = await ctx.reply(message, {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard(allButtons)
-    });
-    
-    userSelection.messageId = sentMessage.message_id;
-    userSelection.currentPage = page;
-    selectedCars.set(ctx.from.id, userSelection);
+    if (userSelection.messageId) {
+        try {
+            await ctx.editMessageText(message, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard(allButtons)
+            });
+        } catch (err) {
+            const sentMessage = await ctx.reply(message, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard(allButtons)
+            });
+            userSelection.messageId = sentMessage.message_id;
+            selectedCars.set(ctx.from.id, userSelection);
+        }
+    } else {
+        const sentMessage = await ctx.reply(message, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard(allButtons)
+        });
+        userSelection.messageId = sentMessage.message_id;
+        selectedCars.set(ctx.from.id, userSelection);
+    }
 }
 
+// ============ TO'LOV QILINGAN AVTOMOBILLARNI KO'RISH (INLINE) ============
+async function showPaidCarsInline(ctx, page = 0) {
+    const paidCars = getPaidCarsList();
+    
+    if (paidCars.length === 0) {
+        await ctx.answerCbQuery('📋 Hali hech qanday to‘lov tasdiqlanmagan.');
+        return;
+    }
+    
+    const itemsPerPage = 5;
+    const totalPages = Math.ceil(paidCars.length / itemsPerPage);
+    const currentPage = Math.min(page, totalPages - 1);
+    const start = currentPage * itemsPerPage;
+    const end = Math.min(start + itemsPerPage, paidCars.length);
+    const pageCars = paidCars.slice(start, end);
+    
+    let message = '✅ *TO‘LOV QILINGAN AVTOMOBILLAR*\n\n';
+    message += `📄 *Sahifa ${currentPage + 1}/${totalPages}* | Jami: ${paidCars.length} ta\n\n`;
+    
+    pageCars.forEach((car, idx) => {
+        const num = start + idx + 1;
+        const sana = car.paid_date.split(',')[0];
+        message += `${num}. *${car.raqam}* | ${car.turi} | ${car.total_amount.toLocaleString()} so‘m\n`;
+        message += `   📅 ${sana} | 👤 ${car.admin_name}\n\n`;
+    });
+    
+    const totalPaidSum = getPaidSum();
+    message += `💰 *Jami to‘lov summa:* ${totalPaidSum.toLocaleString()} so‘m`;
+    
+    // Navigatsiya tugmalari
+    const navButtons = [];
+    if (currentPage > 0) {
+        navButtons.push(Markup.button.callback('◀️ Oldingi', `paid_cars_page_${currentPage - 1}`));
+    }
+    if (currentPage + 1 < totalPages) {
+        navButtons.push(Markup.button.callback('Keyingi ▶️', `paid_cars_page_${currentPage + 1}`));
+    }
+    navButtons.push(Markup.button.callback('🔙 To‘lov qilinmaganlarga qaytish', 'back_to_unpaid'));
+    navButtons.push(Markup.button.callback('❌ Yopish', 'close_paid_inline'));
+    
+    const userSelection = selectedCars.get(ctx.from.id);
+    if (userSelection && userSelection.messageId) {
+        try {
+            await ctx.editMessageText(message, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([navButtons])
+            });
+        } catch (err) {
+            await ctx.reply(message, {
+                parse_mode: 'Markdown',
+                ...Markup.inlineKeyboard([navButtons])
+            });
+        }
+    } else {
+        await ctx.reply(message, {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([navButtons])
+        });
+    }
+    await ctx.answerCbQuery();
+}
+
+// To'lov qilingan avtomobillarni ko'rish (inline tugma)
+bot.action('view_paid_cars', async (ctx) => {
+    await showPaidCarsInline(ctx, 0);
+});
+
+// To'lov qilingan avtomobillar sahifalari
+bot.action(/paid_cars_page_(\d+)/, async (ctx) => {
+    const page = parseInt(ctx.match[1]);
+    await showPaidCarsInline(ctx, page);
+});
+
+// To'lov qilinmaganlarga qaytish
+bot.action('back_to_unpaid', async (ctx) => {
+    const userSelection = selectedCars.get(ctx.from.id);
+    const currentPage = userSelection?.currentPage || 0;
+    await showUnpaidCars(ctx, currentPage);
+});
+
+// To'lov qilingan avtomobillarni yopish (inline)
+bot.action('close_paid_inline', async (ctx) => {
+    await ctx.deleteMessage();
+    await ctx.answerCbQuery();
+});
+
+// Sahifalash (to'lov qilinmagan)
 bot.action(/unpaid_page_(\d+)/, async (ctx) => {
     if (!isSuperAdminById(ctx)) return;
     const page = parseInt(ctx.match[1]);
@@ -782,6 +883,7 @@ bot.action(/unpaid_page_(\d+)/, async (ctx) => {
     await ctx.answerCbQuery();
 });
 
+// Avtomobil tanlash/o'chirish
 bot.action(/toggle_car_(.+)_(.+)_(.+)/, async (ctx) => {
     if (!isSuperAdminById(ctx)) return;
     const carNumber = ctx.match[1];
@@ -803,21 +905,28 @@ bot.action(/toggle_car_(.+)_(.+)_(.+)/, async (ctx) => {
     const totalPages = Math.ceil(unpaidCars.length / itemsPerPage);
     
     let message = '💰 *TO‘LOV QILINMAGAN AVTOMOBILLAR*\n\n';
+    message += `📄 *Sahifa ${page + 1}/${totalPages}* | Jami: ${unpaidCars.length} ta\n\n`;
     
     pageCars.forEach((car, idx) => {
+        const globalIdx = start + idx + 1;
         const isSelected = userSelection.selected.has(car.raqam);
         const checkbox = isSelected ? '☑️' : '⬜';
-        message += `${checkbox} ${start + idx + 1}. *${car.raqam}* | ${car.turi} | ${car.narxi.toLocaleString()} so‘m\n`;
+        message += `${checkbox} *${globalIdx}.* ${car.raqam} | ${car.turi} | ${car.narxi.toLocaleString()} so‘m`;
+        if (car.extra_works && car.extra_works.length > 0) {
+            message += ` (+${(car.extra_amount || 0).toLocaleString()} so‘m)`;
+        }
+        message += `\n`;
     });
     
-    message += `\n📊 *Jami to‘lov qilinmagan:* ${unpaidCars.reduce((s, c) => s + c.narxi, 0).toLocaleString()} so‘m`;
+    const remainingSum = unpaidCars.reduce((s, c) => s + c.narxi, 0);
+    message += `\n📊 *Jami to‘lov qilinmagan:* ${remainingSum.toLocaleString()} so‘m`;
     message += `\n✅ *Tanlanganlar:* ${userSelection.selected.size} ta`;
-    message += `\n📄 *Sahifa:* ${page + 1}/${totalPages}`;
     
     await ctx.editMessageText(message, { parse_mode: 'Markdown' });
     await ctx.answerCbQuery();
 });
 
+// To'lovni tasdiqlash
 bot.action('confirm_payment', async (ctx) => {
     if (!isSuperAdminById(ctx)) return;
     
@@ -900,13 +1009,11 @@ bot.on('contact', async (ctx) => {
     
     console.log(`Kontakt keldi: ${phone} dan ${userName} (${userId})`);
     
-    // Admin tekshiruvi
     if (isAdminPhone(phone)) {
         if (!registeredAdminIds.has(userId)) {
             registeredAdminIds.add(userId);
             saveAdminIds(Array.from(registeredAdminIds));
             await ctx.reply(`✅ Siz ADMIN sifatida tasdiqlandingiz!\n📞 Raqamingiz: ${phone}\n👑 Xush kelibsiz!`, getMainMenu(ctx));
-            
             await sendToAllAdmins(`🆕 Yangi admin qo'shildi!\n👤 ${userName}\n📞 ${phone}`);
         } else {
             await ctx.reply(`✅ Siz allaqachon ADMIN sifatida tasdiqlangansiz!`, getMainMenu(ctx));
@@ -914,13 +1021,11 @@ bot.on('contact', async (ctx) => {
         return;
     }
     
-    // Kuzatuvchi tekshiruvi
     if (isObserverPhone(phone)) {
         if (!registeredObserverIds.has(userId)) {
             registeredObserverIds.add(userId);
             saveObserverIds(Array.from(registeredObserverIds));
             await ctx.reply(`✅ Siz KUZATUVCHI sifatida tasdiqlandingiz!\n📞 Raqamingiz: ${phone}`, getMainMenu(ctx));
-            
             await sendToAllAdmins(`🆕 Yangi kuzatuvchi qo'shildi!\n👤 ${userName}\n📞 ${phone}`);
         } else {
             await ctx.reply(`✅ Siz allaqachon KUZATUVCHI sifatida tasdiqlangansiz!`, getMainMenu(ctx));
