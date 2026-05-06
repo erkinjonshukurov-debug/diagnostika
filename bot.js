@@ -12,7 +12,7 @@ const OBSERVER_PHONE = '+998915425700';
 let registeredObserverId = null;
 
 const ADMIN_IDS = [SUPER_ADMIN_ID, ADMIN2_ID];
-const DIAGNOSIS_PRICE = 250000;
+const BASE_PRICE = 200000;  // YANGI ASOSIY NARX: 200,000 so'm
 
 // AVTOMOBIL TURLARI
 const CAR_TYPES = [
@@ -20,20 +20,39 @@ const CAR_TYPES = [
     'HC45', 'CYZ EXR', 'NQR90', 'NMR77', 'NMR85'
 ];
 
+// QO'SHIMCHA ISH TURLARI
+const EXTRA_WORKS = [
+    '🔧 Qo\'shimcha diagnostika',
+    '🛠️ Remont ishlari',
+    '⚙️ Sozlash ishlari',
+    '🔩 Ehtiyot qismlar',
+    '📊 Kompyuter diagnostikasi',
+    '🔄 Filtr almashtirish',
+    '💡 Shlangi tizim',
+    '🔋 Elektr tizimi'
+];
+
 // ============ AVTOMOBIL RAQAMINI TEKSHIRISH ============
 function isValidPlate(plate) {
     const patterns = [
-        /^[0-9]{2}[A-Z][0-9]{3}[A-Z]{2}$/i,  // 01A777AA
-        /^[0-9]{2}[A-Z][0-9]{6}$/i,          // 01A111111
-        /^[0-9]{5}[A-Z]{3}$/i,               // 01111AAA
-        /^[A-Z][0-9]{3}[A-Z]{2}$/i,          // A777AA
-        /^[0-9]{3}[A-Z]{3}$/i,               // 123ABC
-        /^[0-9]{2}[A-Z]{2}[0-9]{3}$/i,       // 01AA777
-        /^[A-Z]{2}[0-9]{3}[A-Z]{2}$/i,       // AA777AA
-        /^[0-9]{2}[A-Z]{3}[0-9]{2}$/i,       // 01ABC77
-        /^[A-Z][0-9]{2}[A-Z][0-9]{2}[A-Z]$/i // A12B34C
+        /^[0-9]{2}[A-Z][0-9]{3}[A-Z]{2}$/i,
+        /^[0-9]{2}[A-Z][0-9]{6}$/i,
+        /^[0-9]{5}[A-Z]{3}$/i,
+        /^[A-Z][0-9]{3}[A-Z]{2}$/i,
+        /^[0-9]{3}[A-Z]{3}$/i,
+        /^[0-9]{2}[A-Z]{2}[0-9]{3}$/i,
+        /^[A-Z]{2}[0-9]{3}[A-Z]{2}$/i,
+        /^[0-9]{2}[A-Z]{3}[0-9]{2}$/i,
+        /^[A-Z][0-9]{2}[A-Z][0-9]{2}[A-Z]$/i
     ];
     return patterns.some(pattern => pattern.test(plate));
+}
+
+function getExtraWorkKeyboard() {
+    const buttons = EXTRA_WORKS.map(work => [Markup.button.callback(work, `extra_${work.replace(/\s/g, '_')}`)]);
+    buttons.push([Markup.button.callback('✅ Faqat asosiy diagnostika', 'skip_extra')]);
+    buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel_add')]);
+    return Markup.inlineKeyboard(buttons);
 }
 
 function getCarTypeKeyboard() {
@@ -95,6 +114,8 @@ function addMultiplePaidCars(carsToPay, adminName) {
                 raqam: car.raqam.toUpperCase(),
                 turi: car.turi,
                 amount: car.narxi,
+                extra_works: car.extra_works || [],
+                total_amount: car.narxi,
                 admin_name: adminName,
                 paid_date: new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' })
             };
@@ -119,7 +140,7 @@ function isCarPaid(carNumber) {
 
 function getUnpaidCars() {
     const cars = loadData();
-    const diagnosedCars = cars.filter(car => car.diagnostika.includes('o‘tkazildi'));
+    const diagnosedCars = cars.filter(car => car.diagnostika === '✅ o‘tkazildi');
     const paidCars = loadPaidCars();
     const paidNumbers = paidCars.map(c => c.raqam);
     return diagnosedCars.filter(car => !paidNumbers.includes(car.raqam));
@@ -137,14 +158,19 @@ function getTotalDiagnosedSum() {
 
 function getPaidSum() {
     const paidCars = loadPaidCars();
-    return paidCars.reduce((sum, car) => sum + car.amount, 0);
+    return paidCars.reduce((sum, car) => sum + car.total_amount, 0);
 }
 
-function addCar(carNumber, carType, isDiagnosed, adminId, adminName) {
+// Qo'shimcha ish bilan avtomobil qo'shish
+async function addCarWithExtras(carNumber, carType, isDiagnosed, adminId, adminName, extraWorks = [], extraAmount = 0) {
     const cars = loadData();
     const sana = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
     const diagnostika = isDiagnosed ? "✅ o‘tkazildi" : "❌ o‘tkazilmadi";
-    const narxi = isDiagnosed ? DIAGNOSIS_PRICE : 0;
+    let narxi = 0;
+    
+    if (isDiagnosed) {
+        narxi = BASE_PRICE + extraAmount;
+    }
     
     const newCar = {
         id: Date.now(),
@@ -152,7 +178,10 @@ function addCar(carNumber, carType, isDiagnosed, adminId, adminName) {
         raqam: carNumber.toUpperCase(),
         turi: carType,
         diagnostika,
-        narxi,
+        narxi: narxi,
+        base_price: BASE_PRICE,
+        extra_works: extraWorks,
+        extra_amount: extraAmount,
         admin_id: adminId,
         admin_name: adminName
     };
@@ -226,7 +255,7 @@ function getMainMenu(ctx) {
     return null;
 }
 
-// ============ AVTOMOBILLAR RO'YXATI (SAHIFALI) ============
+// ============ AVTOMOBILLAR RO'YXATI ============
 async function showAllCars(ctx, page = 0) {
     const cars = getAllCars();
     
@@ -247,8 +276,11 @@ async function showAllCars(ctx, page = 0) {
         const num = start + idx + 1;
         const paidStatus = isCarPaid(car.raqam) ? '✅ To‘langan' : '⏳ To‘lov kutilmoqda';
         message += `${num}. *${car.raqam}* | ${car.turi} | ${car.diagnostika}\n`;
-        message += `   💰 ${car.narxi.toLocaleString()} so‘m | ${paidStatus}\n`;
-        message += `   📅 ${car.sana} | 👤 ${car.admin_name}\n\n`;
+        message += `   💰 ${car.narxi.toLocaleString()} so‘m | ${paidStatus}`;
+        if (car.extra_works && car.extra_works.length > 0) {
+            message += `\n   📋 Qo‘shimcha: ${car.extra_works.join(', ')} (+${car.extra_amount.toLocaleString()} so‘m)`;
+        }
+        message += `\n   📅 ${car.sana} | 👤 ${car.admin_name}\n\n`;
     });
     
     message += `📊 *Jami:* ${cars.length} ta avtomobil\n`;
@@ -301,7 +333,7 @@ async function showPaidCars(ctx, page = 0) {
     pageCars.forEach((car, idx) => {
         const num = start + idx + 1;
         const sana = car.paid_date.split(',')[0];
-        message += `${num}. *${car.raqam}* | ${car.turi} | ${car.amount.toLocaleString()} so‘m\n`;
+        message += `${num}. *${car.raqam}* | ${car.turi} | ${car.total_amount.toLocaleString()} so‘m\n`;
         message += `   📅 ${sana} | 👤 ${car.admin_name}\n\n`;
     });
     
@@ -335,7 +367,7 @@ bot.action('close_paid', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ TO'LOVNI TASDIQLASH (KO'P TANLASH) ============
+// ============ TO'LOVNI TASDIQLASH ============
 let selectedCars = new Map();
 
 async function showUnpaidCars(ctx, page = 0) {
@@ -361,7 +393,11 @@ async function showUnpaidCars(ctx, page = 0) {
     pageCars.forEach((car, idx) => {
         const isSelected = userSelection.selected.has(car.raqam);
         const checkbox = isSelected ? '☑️' : '⬜';
-        message += `${checkbox} ${start + idx + 1}. *${car.raqam}* | ${car.turi} | ${car.narxi.toLocaleString()} so‘m\n`;
+        message += `${checkbox} ${start + idx + 1}. *${car.raqam}* | ${car.turi} | ${car.narxi.toLocaleString()} so‘m`;
+        if (car.extra_works && car.extra_works.length > 0) {
+            message += ` (+${car.extra_amount.toLocaleString()} so‘m)`;
+        }
+        message += `\n`;
     });
     
     message += `\n📊 *Jami to‘lov qilinmagan:* ${unpaidCars.reduce((s, c) => s + c.narxi, 0).toLocaleString()} so‘m`;
@@ -416,7 +452,6 @@ bot.action(/unpaid_page_(\d+)/, async (ctx) => {
 
 bot.action(/toggle_car_(.+)_(.+)_(.+)/, async (ctx) => {
     if (!isSuperAdmin(ctx)) return;
-    
     const carNumber = ctx.match[1];
     const userSelection = selectedCars.get(ctx.from.id);
     if (!userSelection) return;
@@ -426,7 +461,6 @@ bot.action(/toggle_car_(.+)_(.+)_(.+)/, async (ctx) => {
     } else {
         userSelection.selected.add(carNumber);
     }
-    
     selectedCars.set(ctx.from.id, userSelection);
     
     const unpaidCars = getUnpaidCars();
@@ -473,7 +507,11 @@ bot.action('confirm_payment', async (ctx) => {
     
     let carsList = '';
     carsToPay.forEach((car, idx) => {
-        carsList += `${idx + 1}. ${car.raqam} | ${car.turi} | ${car.narxi.toLocaleString()} so‘m\n`;
+        carsList += `${idx + 1}. ${car.raqam} | ${car.turi} | ${car.narxi.toLocaleString()} so‘m`;
+        if (car.extra_works && car.extra_works.length > 0) {
+            carsList += ` (+${car.extra_amount.toLocaleString()} so‘m qo‘shimcha)`;
+        }
+        carsList += `\n`;
     });
     
     if (registeredObserverId) {
@@ -518,7 +556,7 @@ bot.command('start', async (ctx) => {
         let msg = isSuperAdmin(ctx) ? `👑 Assalomu alaykum SUPER ADMIN ${ctx.from.first_name}!` :
                   isAdmin(ctx) ? `👋 Assalomu alaykum Admin ${ctx.from.first_name}!` :
                   `👋 Assalomu alaykum Kuzatuvchi ${ctx.from.first_name}!`;
-        await ctx.reply(msg + `\n\n✅ Bot ishga tushdi.`, { parse_mode: 'Markdown', ...getMainMenu(ctx) });
+        await ctx.reply(msg + `\n\n✅ Bot ishga tushdi.\n💰 *Asosiy diagnostika narxi:* ${BASE_PRICE.toLocaleString()} so‘m`, { parse_mode: 'Markdown', ...getMainMenu(ctx) });
         return;
     }
     await ctx.reply(`❌ Ro‘yxatdan o‘tmagansiz.\n\n📞 Telefon raqamingizni yuboring:`, Markup.keyboard([[Markup.button.contactRequest('📞 Telefon raqamni yuborish')]]).resize());
@@ -539,6 +577,28 @@ bot.command('menu', async (ctx) => {
     await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
 });
 
+// ============ QO'SHIMCHA ISH SUMMASINI KIRITISH ============
+let extraAmountStep = new Map();
+
+async function askExtraAmount(ctx, carNumber, carType, extraWorks) {
+    extraAmountStep.set(ctx.from.id, {
+        carNumber: carNumber,
+        carType: carType,
+        extraWorks: extraWorks,
+        step: 'waiting_for_amount'
+    });
+    
+    await ctx.reply(
+        `📝 *Qo‘shimcha ishlar uchun summa kiriting:*\n\n` +
+        `Tanlangan ishlar: ${extraWorks.join(', ')}\n\n` +
+        `💰 Asosiy narx: ${BASE_PRICE.toLocaleString()} so‘m\n` +
+        `➕ Qo‘shimcha summa (faqat raqam):\n\n` +
+        `Misol: 50000 yoki 150000\n\n` +
+        `⚠️ Agar qo‘shimcha summa bo‘lmasa, 0 yoki "yo‘q" deb yozing`,
+        { parse_mode: 'Markdown' }
+    );
+}
+
 // ============ XABAR BOSHQARISH ============
 const addSteps = new Map();
 const deleteSteps = new Map();
@@ -549,7 +609,75 @@ bot.on('text', async (ctx) => {
     const text = ctx.message.text;
     const step = addSteps.get(ctx.from.id);
     const deleteStep = deleteSteps.get(ctx.from.id);
+    const extraStep = extraAmountStep.get(ctx.from.id);
     
+    // Qo'shimcha summa kiritish
+    if (extraStep && extraStep.step === 'waiting_for_amount') {
+        if (!isAdmin(ctx)) return;
+        
+        let extraAmount = 0;
+        const input = text.toLowerCase();
+        
+        if (input !== '0' && input !== 'yo\'q' && input !== 'нет') {
+            const parsed = parseInt(text.replace(/[^0-9]/g, ''));
+            if (isNaN(parsed)) {
+                return ctx.reply('❌ Noto‘g‘ri format! Iltimos, faqat raqam kiriting. Misol: 50000');
+            }
+            extraAmount = parsed;
+        }
+        
+        const totalPrice = BASE_PRICE + extraAmount;
+        
+        await addCarWithExtras(
+            extraStep.carNumber,
+            extraStep.carType,
+            true,
+            ctx.from.id,
+            ctx.from.first_name,
+            extraStep.extraWorks,
+            extraAmount
+        );
+        
+        extraAmountStep.delete(ctx.from.id);
+        
+        await ctx.reply(
+            `✅ *Avtomobil qo‘shildi!*\n\n` +
+            `🚗 *Raqam:* ${extraStep.carNumber}\n` +
+            `🏷️ *Turi:* ${extraStep.carType}\n` +
+            `✅ *Diagnostika:* O‘tkazildi\n` +
+            `💰 *Asosiy narx:* ${BASE_PRICE.toLocaleString()} so‘m\n` +
+            `➕ *Qo‘shimcha ishlar:* ${extraStep.extraWorks.join(', ')}\n` +
+            `💵 *Qo‘shimcha summa:* ${extraAmount.toLocaleString()} so‘m\n` +
+            `💎 *Jami summa:* ${totalPrice.toLocaleString()} so‘m\n\n` +
+            `👤 *Admin:* ${ctx.from.first_name}`,
+            { parse_mode: 'Markdown' }
+        );
+        
+        const total = getTotalDiagnosedSum();
+        const paidSum = getPaidSum();
+        const remaining = total - paidSum;
+        
+        if (registeredObserverId) {
+            await bot.telegram.sendMessage(registeredObserverId,
+                `🔔 *Yangi diagnostika!*\n\n` +
+                `🚗 *Raqam:* ${extraStep.carNumber}\n` +
+                `🏷️ *Turi:* ${extraStep.carType}\n` +
+                `💰 *Asosiy narx:* ${BASE_PRICE.toLocaleString()} so‘m\n` +
+                `➕ *Qo‘shimcha:* ${extraAmount.toLocaleString()} so‘m\n` +
+                `💎 *Jami summa:* ${totalPrice.toLocaleString()} so‘m\n` +
+                `👤 *Admin:* ${ctx.from.first_name}\n\n` +
+                `📊 *JAMI SUM:* ${total.toLocaleString()} so‘m\n` +
+                `💵 *TO‘LOV QILINGAN:* ${paidSum.toLocaleString()} so‘m\n` +
+                `📉 *QOLDIQ:* ${remaining.toLocaleString()} so‘m`,
+                { parse_mode: 'Markdown' }
+            );
+        }
+        
+        await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
+        return;
+    }
+    
+    // Avtomobil raqami kiritish
     if (step?.step === 'number') {
         if (!isAdmin(ctx)) return;
         
@@ -557,12 +685,8 @@ bot.on('text', async (ctx) => {
             return ctx.reply(
                 `❌ *Noto‘g‘ri format!*\n\n` +
                 `Qabul qilinadigan formatlar:\n` +
-                `• 01A777AA (2 raqam, 1 harf, 3 raqam, 2 harf)\n` +
-                `• 01A111111 (2 raqam, 1 harf, 6 raqam)\n` +
-                `• 01111AAA (5 raqam, 3 harf)\n` +
-                `• A777AA (1 harf, 3 raqam, 2 harf)\n` +
-                `• 123ABC (3 raqam, 3 harf)\n\n` +
-                `Qaytadan urinib ko'ring!`,
+                `• 01A777AA | 01A111111 | 01111AAA\n` +
+                `• A777AA | 123ABC | 01AA777 | AA777AA`,
                 { parse_mode: 'Markdown' }
             );
         }
@@ -572,11 +696,12 @@ bot.on('text', async (ctx) => {
         addSteps.set(ctx.from.id, step);
         
         return ctx.reply(
-            `✅ Raqam: ${step.carNumber}\n\n*Avtomobil turini tanlang:*`,
+            `✅ *Raqam:* ${step.carNumber}\n\n*Avtomobil turini tanlang:*`,
             { parse_mode: 'Markdown', ...getCarTypeKeyboard() }
         );
     }
     
+    // Avtomobil o'chirish
     if (deleteStep?.step === 'delete_car' && isSuperAdmin(ctx)) {
         const deleted = deleteCar(text);
         await ctx.reply(deleted ? `✅ Avtomobil o‘chirildi: ${text.toUpperCase()}` : `❌ ${text} topilmadi.`);
@@ -590,6 +715,7 @@ bot.on('text', async (ctx) => {
         addSteps.set(ctx.from.id, { step: 'number' });
         return ctx.reply(
             `📝 *1-qadam:* Avtomobil raqamini kiriting\n\n` +
+            `💰 *Asosiy diagnostika narxi:* ${BASE_PRICE.toLocaleString()} so‘m\n\n` +
             `Qabul qilinadigan formatlar:\n` +
             `• 01A777AA | 01A111111 | 01111AAA\n` +
             `• A777AA | 123ABC | 01AA777 | AA777AA`,
@@ -629,6 +755,7 @@ bot.on('text', async (ctx) => {
         const remaining = total - paidSum;
         return ctx.reply(
             `💰 *SUMMA HISOBOTI*\n\n` +
+            `💰 *Asosiy diagnostika narxi:* ${BASE_PRICE.toLocaleString()} so‘m\n\n` +
             `📊 *Jami diagnostika summasi:* ${total.toLocaleString()} so‘m\n` +
             `💵 *To‘lov qilingan:* ${paidSum.toLocaleString()} so‘m\n` +
             `📉 *Qoldiq:* ${remaining.toLocaleString()} so‘m`,
@@ -655,6 +782,7 @@ bot.on('text', async (ctx) => {
         const backupData = { 
             cars: getAllCars(), 
             paid_cars: loadPaidCars(),
+            base_price: BASE_PRICE,
             date: new Date().toLocaleString('uz-UZ') 
         };
         return ctx.replyWithDocument({ source: Buffer.from(JSON.stringify(backupData, null, 2), 'utf-8'), filename: `backup_${Date.now()}.json` });
@@ -679,38 +807,221 @@ bot.action(/car_type_(.+)/, async (ctx) => {
     }
     
     step.carType = selectedType;
-    step.step = null;
-    addSteps.delete(ctx.from.id);
+    step.step = 'waiting_for_extra';
+    addSteps.set(ctx.from.id, step);
     
     await ctx.editMessageText(
         `✅ *Ma'lumotlar:*\n` +
-        `🚗 Raqam: ${step.carNumber}\n` +
-        `🏷️ Turi: ${selectedType}\n\n` +
-        `*Diagnostika holati?*`,
-        Markup.inlineKeyboard([
-            [Markup.button.callback(`✅ O‘tkazildi (${DIAGNOSIS_PRICE.toLocaleString()} so‘m)`, `diag_yes_${step.carNumber}_${selectedType}`)],
-            [Markup.button.callback('❌ O‘tkazilmadi', `diag_no_${step.carNumber}_${selectedType}`)],
-            [Markup.button.callback('🔙 Orqaga', 'cancel_add')]
-        ])
+        `🚗 *Raqam:* ${step.carNumber}\n` +
+        `🏷️ *Turi:* ${selectedType}\n` +
+        `💰 *Asosiy narx:* ${BASE_PRICE.toLocaleString()} so‘m\n\n` +
+        `*Qo‘shimcha ishlar bormi?*`,
+        { parse_mode: 'Markdown', ...getExtraWorkKeyboard() }
     );
     await ctx.answerCbQuery();
 });
 
+// ============ QO'SHIMCHA ISHLARNI TANLASH ============
+let selectedExtraWorks = new Map();
+
+bot.action(/extra_(.+)/, async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    
+    const work = ctx.match[1].replace(/_/g, ' ');
+    const step = addSteps.get(ctx.from.id);
+    
+    if (!step || step.step !== 'waiting_for_extra') {
+        await ctx.answerCbQuery('❌ Jarayon qaytadan boshlang /add');
+        return;
+    }
+    
+    if (!selectedExtraWorks.has(ctx.from.id)) {
+        selectedExtraWorks.set(ctx.from.id, []);
+    }
+    const works = selectedExtraWorks.get(ctx.from.id);
+    
+    if (!works.includes(work)) {
+        works.push(work);
+        selectedExtraWorks.set(ctx.from.id, works);
+    }
+    
+    // Yangi tugmalar bilan qayta ko'rsatish
+    const buttons = EXTRA_WORKS.map(w => {
+        const isSelected = works.includes(w);
+        return [Markup.button.callback(
+            `${isSelected ? '☑️' : '⬜'} ${w}`,
+            `extra_${w.replace(/\s/g, '_')}`
+        )];
+    });
+    buttons.push([Markup.button.callback('✅ Tugatish va summa kiritish', 'finish_extra')]);
+    buttons.push([Markup.button.callback('❌ Qo‘shimcha ishlarsiz', 'skip_extra')]);
+    buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel_add')]);
+    
+    let message = `✅ *Ma'lumotlar:*\n` +
+        `🚗 *Raqam:* ${step.carNumber}\n` +
+        `🏷️ *Turi:* ${step.carType}\n` +
+        `💰 *Asosiy narx:* ${BASE_PRICE.toLocaleString()} so‘m\n\n` +
+        `*Tanlangan qo‘shimcha ishlar:*\n`;
+    
+    if (works.length === 0) {
+        message += `❌ Hali hech narsa tanlanmagan\n\n`;
+    } else {
+        works.forEach(w => {
+            message += `✅ ${w}\n`;
+        });
+        message += `\n`;
+    }
+    
+    message += `*Qo‘shimcha ishlarni tanlang yoki tugatish tugmasini bosing:*`;
+    
+    await ctx.editMessageText(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(buttons)
+    });
+    await ctx.answerCbQuery();
+});
+
+bot.action('finish_extra', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    
+    const step = addSteps.get(ctx.from.id);
+    if (!step || step.step !== 'waiting_for_extra') {
+        await ctx.answerCbQuery('❌ Jarayon qaytadan boshlang /add');
+        return;
+    }
+    
+    const works = selectedExtraWorks.get(ctx.from.id) || [];
+    addSteps.delete(ctx.from.id);
+    selectedExtraWorks.delete(ctx.from.id);
+    
+    if (works.length === 0) {
+        // Qo'shimcha ishlarsiz, faqat asosiy summa bilan qo'shish
+        await addCarWithExtras(
+            step.carNumber,
+            step.carType,
+            true,
+            ctx.from.id,
+            ctx.from.first_name,
+            [],
+            0
+        );
+        
+        await ctx.editMessageText(
+            `✅ *Avtomobil qo‘shildi!*\n\n` +
+            `🚗 *Raqam:* ${step.carNumber}\n` +
+            `🏷️ *Turi:* ${step.carType}\n` +
+            `✅ *Diagnostika:* O‘tkazildi\n` +
+            `💰 *Jami summa:* ${BASE_PRICE.toLocaleString()} so‘m\n\n` +
+            `👤 *Admin:* ${ctx.from.first_name}`,
+            { parse_mode: 'Markdown' }
+        );
+        
+        const total = getTotalDiagnosedSum();
+        const paidSum = getPaidSum();
+        const remaining = total - paidSum;
+        
+        if (registeredObserverId) {
+            await bot.telegram.sendMessage(registeredObserverId,
+                `🔔 *Yangi diagnostika!*\n\n` +
+                `🚗 *Raqam:* ${step.carNumber}\n` +
+                `🏷️ *Turi:* ${step.carType}\n` +
+                `💰 *Summa:* ${BASE_PRICE.toLocaleString()} so‘m\n` +
+                `👤 *Admin:* ${ctx.from.first_name}\n\n` +
+                `📊 *JAMI SUM:* ${total.toLocaleString()} so‘m\n` +
+                `💵 *TO‘LOV QILINGAN:* ${paidSum.toLocaleString()} so‘m\n` +
+                `📉 *QOLDIQ:* ${remaining.toLocaleString()} so‘m`,
+                { parse_mode: 'Markdown' }
+            );
+        }
+        
+        await ctx.answerCbQuery();
+        await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
+    } else {
+        // Qo'shimcha ishlar bor, summa so'rash
+        await ctx.editMessageText(
+            `✅ *Tanlangan qo‘shimcha ishlar:*\n${works.map(w => `• ${w}`).join('\n')}\n\n` +
+            `💰 *Asosiy narx:* ${BASE_PRICE.toLocaleString()} so‘m\n\n` +
+            `➡️ *Endi qo‘shimcha ishlar uchun summa kiritishingiz kerak.*\n\n` +
+            `Iltimos, "Tugatish va summa kiritish" tugmasini bosing.`,
+            { parse_mode: 'Markdown' }
+        );
+        
+        await askExtraAmount(ctx, step.carNumber, step.carType, works);
+        await ctx.answerCbQuery();
+    }
+});
+
+bot.action('skip_extra', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    
+    const step = addSteps.get(ctx.from.id);
+    if (!step || step.step !== 'waiting_for_extra') {
+        await ctx.answerCbQuery('❌ Jarayon qaytadan boshlang /add');
+        return;
+    }
+    
+    addSteps.delete(ctx.from.id);
+    selectedExtraWorks.delete(ctx.from.id);
+    
+    await addCarWithExtras(
+        step.carNumber,
+        step.carType,
+        true,
+        ctx.from.id,
+        ctx.from.first_name,
+        [],
+        0
+    );
+    
+    await ctx.editMessageText(
+        `✅ *Avtomobil qo‘shildi!*\n\n` +
+        `🚗 *Raqam:* ${step.carNumber}\n` +
+        `🏷️ *Turi:* ${step.carType}\n` +
+        `✅ *Diagnostika:* O‘tkazildi\n` +
+        `💰 *Jami summa:* ${BASE_PRICE.toLocaleString()} so‘m\n\n` +
+        `👤 *Admin:* ${ctx.from.first_name}`,
+        { parse_mode: 'Markdown' }
+    );
+    
+    const total = getTotalDiagnosedSum();
+    const paidSum = getPaidSum();
+    const remaining = total - paidSum;
+    
+    if (registeredObserverId) {
+        await bot.telegram.sendMessage(registeredObserverId,
+            `🔔 *Yangi diagnostika!*\n\n` +
+            `🚗 *Raqam:* ${step.carNumber}\n` +
+            `🏷️ *Turi:* ${step.carType}\n` +
+            `💰 *Summa:* ${BASE_PRICE.toLocaleString()} so‘m\n` +
+            `👤 *Admin:* ${ctx.from.first_name}\n\n` +
+            `📊 *JAMI SUM:* ${total.toLocaleString()} so‘m\n` +
+            `💵 *TO‘LOV QILINGAN:* ${paidSum.toLocaleString()} so‘m\n` +
+            `📉 *QOLDIQ:* ${remaining.toLocaleString()} so‘m`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+    
+    await ctx.answerCbQuery();
+    await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
+});
+
 bot.action('cancel_add', async (ctx) => {
     addSteps.delete(ctx.from.id);
+    selectedExtraWorks.delete(ctx.from.id);
+    extraAmountStep.delete(ctx.from.id);
     await ctx.editMessageText('❌ Bekor qilindi');
     await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
     await ctx.answerCbQuery();
 });
 
-// ============ DIAGNOSTIKA JAVOBI ============
+// ============ DIAGNOSTIKA JAVOBI (eski usul – qo'shimcha ishlarsiz) ============
 bot.action(/diag_yes_(.+)_(.+)/, async (ctx) => {
     if (!isAdmin(ctx)) return;
     const carNumber = ctx.match[1], carType = ctx.match[2];
-    addCar(carNumber, carType, true, ctx.from.id, ctx.from.first_name);
+    await addCarWithExtras(carNumber, carType, true, ctx.from.id, ctx.from.first_name, [], 0);
     await ctx.editMessageText(
         `✅ *Avtomobil qo‘shildi!*\n\n` +
-        `🚗 ${carNumber}\n🏷️ ${carType}\n✅ Diagnostika o‘tkazildi\n💰 ${DIAGNOSIS_PRICE.toLocaleString()} so‘m`,
+        `🚗 ${carNumber}\n🏷️ ${carType}\n✅ Diagnostika o‘tkazildi\n💰 ${BASE_PRICE.toLocaleString()} so‘m`,
         { parse_mode: 'Markdown' }
     );
     
@@ -723,7 +1034,7 @@ bot.action(/diag_yes_(.+)_(.+)/, async (ctx) => {
             `🔔 *Yangi diagnostika!*\n\n` +
             `🚗 *Raqam:* ${carNumber}\n` +
             `🏷️ *Turi:* ${carType}\n` +
-            `💰 *Summa:* ${DIAGNOSIS_PRICE.toLocaleString()} so‘m\n` +
+            `💰 *Summa:* ${BASE_PRICE.toLocaleString()} so‘m\n` +
             `👤 *Admin:* ${ctx.from.first_name}\n\n` +
             `📊 *JAMI SUM:* ${total.toLocaleString()} so‘m\n` +
             `💵 *TO‘LOV QILINGAN:* ${paidSum.toLocaleString()} so‘m\n` +
@@ -774,6 +1085,7 @@ bot.launch();
 console.log('🤖 Bot ishga tushdi!');
 console.log(`👑 Super Admin ID: ${SUPER_ADMIN_ID}`);
 console.log(`📞 Kuzatuvchi telefoni: ${OBSERVER_PHONE}`);
+console.log(`💰 Asosiy diagnostika narxi: ${BASE_PRICE.toLocaleString()} so‘m`);
 console.log(`🚗 Avtomobil turlari: ${CAR_TYPES.join(', ')}`);
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
