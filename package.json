@@ -1,16 +1,18 @@
 {
   "name": "avtobot",
   "version": "1.0.0",
-  "description": "",
+  "description": "Avtomobil diagnostika boti",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "dotenv": "^16.0.3",
-    "telegraf": "^4.12.2"
-  }
+    "telegraf": "^4.12.2",
+    "sharp": "^0.33.0",
+    "tesseract.js": "^5.0.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
 }
