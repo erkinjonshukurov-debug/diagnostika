@@ -281,10 +281,12 @@ function getAllCars() {
 }
 
 // ============ XABAR YUBORISH ============
+let botInstance = null;
+
 async function sendToAllObservers(message, options = {}) {
     for (const observerId of registeredObserverIds) {
         try {
-            await bot.telegram.sendMessage(observerId, message, options);
+            await botInstance.telegram.sendMessage(observerId, message, options);
         } catch (err) {
             console.error(`Kuzatuvchi ${observerId} ga xabar yuborilmadi:`, err.message);
         }
@@ -294,7 +296,7 @@ async function sendToAllObservers(message, options = {}) {
 async function sendToAllAdmins(message, options = {}) {
     for (const adminId of registeredAdminIds) {
         try {
-            await bot.telegram.sendMessage(adminId, message, options);
+            await botInstance.telegram.sendMessage(adminId, message, options);
         } catch (err) {
             console.error(`Admin ${adminId} ga xabar yuborilmadi:`, err.message);
         }
@@ -303,6 +305,7 @@ async function sendToAllAdmins(message, options = {}) {
 
 // ============ BOT ============
 const bot = new Telegraf(BOT_TOKEN);
+botInstance = bot;
 
 function isSuperAdminById(ctx) {
     const userId = ctx.from.id;
@@ -686,6 +689,7 @@ bot.action('close_paid', async (ctx) => {
 
 // ============ TO'LOVNI TASDIQLASH (KO'P TANLASH VA SAHIFALAR ORASIDA O'TISH) ============
 let selectedCars = new Map();
+let currentMessageId = new Map();
 
 async function showUnpaidCars(ctx, page = 0) {
     const unpaidCars = getUnpaidCars();
@@ -705,7 +709,7 @@ async function showUnpaidCars(ctx, page = 0) {
     const pageCars = unpaidCars.slice(start, end);
     
     if (!selectedCars.has(ctx.from.id)) {
-        selectedCars.set(ctx.from.id, { selected: new Set(), messageId: null, currentPage: currentPage });
+        selectedCars.set(ctx.from.id, { selected: new Set(), currentPage: currentPage });
     }
     const userSelection = selectedCars.get(ctx.from.id);
     userSelection.currentPage = currentPage;
@@ -768,38 +772,26 @@ async function showUnpaidCars(ctx, page = 0) {
     allButtons.push(...paidButton);
     allButtons.push(...actionButtons);
     
-    if (userSelection.messageId) {
-        try {
-            await ctx.editMessageText(message, {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard(allButtons)
-            });
-        } catch (err) {
-            const sentMessage = await ctx.reply(message, {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard(allButtons)
-            });
-            userSelection.messageId = sentMessage.message_id;
-            selectedCars.set(ctx.from.id, userSelection);
-        }
-    } else {
-        const sentMessage = await ctx.reply(message, {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard(allButtons)
-        });
-        userSelection.messageId = sentMessage.message_id;
-        selectedCars.set(ctx.from.id, userSelection);
-    }
+    // Xabarni yuborish yoki yangilash
+    const msg = await ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(allButtons)
+    });
+    currentMessageId.set(ctx.from.id, msg.message_id);
 }
 
-// Sahifalash (to'lov qilinmagan)
+// Sahifalash (to'lov qilinmagan) - MUHIM QISM
 bot.action(/unpaid_page_(\d+)/, async (ctx) => {
     if (!isSuperAdminById(ctx)) {
         await ctx.answerCbQuery('Ruxsat yo‘q');
         return;
     }
     const page = parseInt(ctx.match[1]);
-    console.log(`Sahifa o'tish: ${page}`);
+    // Eski xabarni o'chirish
+    try {
+        await ctx.deleteMessage();
+    } catch(e) {}
+    // Yangi sahifani ko'rsatish
     await showUnpaidCars(ctx, page);
     await ctx.answerCbQuery();
 });
@@ -846,25 +838,10 @@ async function showPaidCarsInline(ctx, page = 0) {
     navButtons.push(Markup.button.callback('🔙 To‘lov qilinmaganlarga qaytish', 'back_to_unpaid'));
     navButtons.push(Markup.button.callback('❌ Yopish', 'close_paid_inline'));
     
-    const userSelection = selectedCars.get(ctx.from.id);
-    if (userSelection && userSelection.messageId) {
-        try {
-            await ctx.editMessageText(message, {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([navButtons])
-            });
-        } catch (err) {
-            await ctx.reply(message, {
-                parse_mode: 'Markdown',
-                ...Markup.inlineKeyboard([navButtons])
-            });
-        }
-    } else {
-        await ctx.reply(message, {
-            parse_mode: 'Markdown',
-            ...Markup.inlineKeyboard([navButtons])
-        });
-    }
+    await ctx.reply(message, {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([navButtons])
+    });
     await ctx.answerCbQuery();
 }
 
@@ -876,15 +853,18 @@ bot.action('view_paid_cars', async (ctx) => {
 // To'lov qilingan avtomobillar sahifalari
 bot.action(/paid_cars_page_(\d+)/, async (ctx) => {
     const page = parseInt(ctx.match[1]);
-    console.log(`To'langanlar sahifasi: ${page}`);
+    await ctx.deleteMessage();
     await showPaidCarsInline(ctx, page);
+    await ctx.answerCbQuery();
 });
 
 // To'lov qilinmaganlarga qaytish
 bot.action('back_to_unpaid', async (ctx) => {
+    await ctx.deleteMessage();
     const userSelection = selectedCars.get(ctx.from.id);
     const currentPage = userSelection?.currentPage || 0;
     await showUnpaidCars(ctx, currentPage);
+    await ctx.answerCbQuery();
 });
 
 // To'lov qilingan avtomobillarni yopish (inline)
