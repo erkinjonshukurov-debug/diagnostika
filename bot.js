@@ -9,8 +9,8 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPER_ADMIN_ID = 1437230485;
 const ADMIN2_ID = 987654321;
 
-// KUZATUVCHI TELEFON RAQAMLARI
-const OBSERVER_PHONES = ['+998915425700', '+998902247888'];
+// KUZATUVCHI TELEFON RAQAMLARI (turli formatlarda)
+const OBSERVER_PHONES = ['+998915425700', '+998902247888', '998915425700', '998902247888'];
 let registeredObserverIds = new Set();
 
 const ADMIN_IDS = [SUPER_ADMIN_ID, ADMIN2_ID];
@@ -43,7 +43,9 @@ function isValidPlate(plate) {
         /^[A-Z][0-9]{3}[A-Z]{2}$/i,
         /^[0-9]{3}[A-Z]{3}$/i,
         /^[0-9]{2}[A-Z]{2}[0-9]{3}$/i,
-        /^[A-Z]{2}[0-9]{3}[A-Z]{2}$/i
+        /^[A-Z]{2}[0-9]{3}[A-Z]{2}$/i,
+        /^[0-9]{2}[A-Z]{3}[0-9]{2}$/i,
+        /^[A-Z][0-9]{2}[A-Z][0-9]{2}[A-Z]$/i
     ];
     return patterns.some(pattern => pattern.test(plate));
 }
@@ -252,6 +254,18 @@ async function sendToAllObservers(message, options = {}) {
             console.error(`Kuzatuvchi ${observerId} ga xabar yuborilmadi:`, err.message);
         }
     }
+}
+
+// ============ TELEFON RAQAMINI TEKSHIRISH ============
+function isObserverPhone(phone) {
+    // Raqamni tozalash
+    const cleanPhone = phone.replace(/^\+/, '').replace(/\s/g, '');
+    
+    // Ro'yxatdagi raqamlar bilan solishtirish
+    return OBSERVER_PHONES.some(p => {
+        const cleanP = p.replace(/^\+/, '').replace(/\s/g, '');
+        return cleanPhone === cleanP || phone === p;
+    });
 }
 
 // ============ BOT ============
@@ -816,23 +830,35 @@ bot.command('start', async (ctx) => {
         await ctx.reply(msg + `\n\n✅ Bot ishga tushdi.\n💰 *Asosiy diagnostika narxi:* ${BASE_PRICE.toLocaleString()} so‘m`, { parse_mode: 'Markdown', ...getMainMenu(ctx) });
         return;
     }
-    await ctx.reply(`❌ Ro‘yxatdan o‘tmagansiz.\n\n📞 Telefon raqamingizni yuboring:`, Markup.keyboard([[Markup.button.contactRequest('📞 Telefon raqamni yuborish')]]).resize());
+    await ctx.reply(`❌ Ro‘yxatdan o‘tmagansiz.\n\n📞 Iltimos, telefon raqamingizni yuboring:`, Markup.keyboard([[Markup.button.contactRequest('📞 Telefon raqamni yuborish')]]).resize());
 });
 
+// ============ TELEFON RAQAMNI QABUL QILISH ============
 bot.on('contact', async (ctx) => {
     const phone = ctx.message.contact.phone_number;
     const userId = ctx.from.id;
     
-    if (OBSERVER_PHONES.includes(phone)) {
+    // Telefon raqamni tozalash
+    const cleanPhone = phone.replace(/^\+/, '').replace(/\s/g, '');
+    
+    // Ro'yxatdagi raqamlar bilan solishtirish (turli formatlarda)
+    const isObserver = OBSERVER_PHONES.some(p => {
+        const cleanP = p.replace(/^\+/, '').replace(/\s/g, '');
+        return cleanPhone === cleanP || phone === p;
+    });
+    
+    console.log(`Kuzatuvchi tekshiruvi: ${phone} -> ${isObserver ? '✅ Ruxsat bor' : '❌ Ruxsat yo\'q'}`);
+    
+    if (isObserver) {
         if (!registeredObserverIds.has(userId)) {
             registeredObserverIds.add(userId);
             saveObserverIds(Array.from(registeredObserverIds));
-            await ctx.reply(`✅ Siz kuzatuvchi sifatida tasdiqlandingiz!`, getMainMenu(ctx));
+            await ctx.reply(`✅ Siz kuzatuvchi sifatida tasdiqlandingiz!\n📞 Raqamingiz: ${phone}`, getMainMenu(ctx));
         } else {
             await ctx.reply(`✅ Siz allaqachon kuzatuvchi sifatida tasdiqlangansiz!`, getMainMenu(ctx));
         }
     } else {
-        await ctx.reply(`❌ Sizning raqamingiz kuzatuvchilar ro‘yxatida yo‘q.`);
+        await ctx.reply(`❌ Sizning raqamingiz (${phone}) kuzatuvchilar ro'yxatida yo'q.\n\n📞 Ro'yxatdagi raqamlar: ${OBSERVER_PHONES.filter(p => p.startsWith('+')).join(', ')}`);
     }
 });
 
@@ -1297,13 +1323,6 @@ bot.action('cancel_add', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-bot.action('cancel_edit', async (ctx) => {
-    editSteps.delete(ctx.from.id);
-    await ctx.editMessageText('❌ Bekor qilindi');
-    await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
-    await ctx.answerCbQuery();
-});
-
 // ============ BACKUP TIKLASH ============
 bot.on('document', async (ctx) => {
     if (!isSuperAdmin(ctx)) return;
@@ -1329,7 +1348,7 @@ bot.on('document', async (ctx) => {
 bot.launch();
 console.log('🤖 Bot ishga tushdi!');
 console.log(`👑 Super Admin ID: ${SUPER_ADMIN_ID}`);
-console.log(`📞 Kuzatuvchi telefonlari: ${OBSERVER_PHONES.join(', ')}`);
+console.log(`📞 Kuzatuvchi telefonlari: +998915425700, +998902247888`);
 console.log(`💰 Asosiy diagnostika narxi: ${BASE_PRICE.toLocaleString()} so‘m`);
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
