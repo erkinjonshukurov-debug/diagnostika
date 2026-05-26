@@ -326,13 +326,12 @@ function getMainMenu(ctx) {
             ['🗑️ Avtomobil o\'chirish', '📊 Statistika'],
             ['💰 Jami summa', '📋 Avtomobillar'],
             ['✅ Tasdiqlanganlar', '💵 To\'lovni tasdiqlash'],
-            ['➕ Qo\'shimcha summa qo\'shish', '💾 Backup olish'],
-            ['🔄 Backup tiklash']
+            ['💾 Backup olish', '🔄 Backup tiklash']
         ]).resize();
     } else if (isAdminById(ctx)) {
         return Markup.keyboard([
             ['🚗 Avtomobil qo\'shish', '✏️ Ma\'lumot tahrirlash'],
-            ['➕ Qo\'shimcha summa qo\'shish', '⬅️ Oxirgi avtomobilni o\'chirish']
+            ['⬅️ Oxirgi avtomobilni o\'chirish']
         ]).resize();
     } else if (isObserverById(ctx)) {
         return Markup.keyboard([
@@ -820,111 +819,6 @@ bot.action('unpaid_view_paid', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ QO'SHIMCHA SUMMA QO'SHISH FUNKSIYASI (YANGI) ============
-let extraAmountSteps = new Map(); // userId -> { carNumber, step, selectedWorks, originalCar }
-
-// Qo'shimcha summa qo'shish menyusini ko'rsatish
-async function showAddExtraAmountMenu(ctx, carNumber) {
-    const car = findCarByNumber(carNumber);
-    if (!car) {
-        await ctx.reply(`❌ ${carNumber} raqamli avtomobil topilmadi.`);
-        return;
-    }
-    
-    extraAmountSteps.set(ctx.from.id, {
-        carNumber: car.raqam,
-        step: 'select_works',
-        selectedWorks: [],
-        originalCar: car
-    });
-    
-    let message = `➕ *QO'SHIMCHA SUMMA QO'SHISH*\n\n`;
-    message += `🚗 *Avtomobil:* ${car.raqam}\n`;
-    message += `🏷️ *Turi:* ${car.turi}\n`;
-    message += `💰 *Hozirgi summa:* ${car.narxi.toLocaleString()} so‘m\n`;
-    message += `📋 *Hozirgi qo‘shimcha ishlar:* ${car.extra_works && car.extra_works.length > 0 ? car.extra_works.join(', ') : 'Yo‘q'}\n\n`;
-    message += `*Yangi qo‘shimcha ishlarni tanlang (mavjudlariga qo‘shiladi):*\n`;
-    
-    const buttons = EXTRA_WORKS.map(work => {
-        return [Markup.button.callback(`⬜ ${work}`, `extra_add_${work.replace(/\s/g, '_')}`)];
-    });
-    buttons.push([Markup.button.callback('✅ Tugatish va summa kiritish', 'finish_add_extra')]);
-    buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel_add_extra')]);
-    
-    await ctx.reply(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
-}
-
-// Qo'shimcha summa qo'shishni boshqarish
-bot.action(/extra_add_(.+)/, async (ctx) => {
-    if (!isAdminById(ctx)) return;
-    const work = ctx.match[1].replace(/_/g, ' ');
-    const stepData = extraAmountSteps.get(ctx.from.id);
-    if (!stepData || stepData.step !== 'select_works') {
-        await ctx.answerCbQuery('❌ Jarayon qaytadan boshlang!');
-        return;
-    }
-    
-    const selectedWorks = stepData.selectedWorks || [];
-    if (selectedWorks.includes(work)) {
-        const index = selectedWorks.indexOf(work);
-        selectedWorks.splice(index, 1);
-    } else {
-        selectedWorks.push(work);
-    }
-    stepData.selectedWorks = selectedWorks;
-    extraAmountSteps.set(ctx.from.id, stepData);
-    
-    // Xabarni yangilash
-    const car = findCarByNumber(stepData.carNumber);
-    let message = `➕ *QO'SHIMCHA SUMMA QO'SHISH*\n\n`;
-    message += `🚗 *Avtomobil:* ${car.raqam}\n`;
-    message += `🏷️ *Turi:* ${car.turi}\n`;
-    message += `💰 *Hozirgi summa:* ${car.narxi.toLocaleString()} so‘m\n\n`;
-    message += `*Tanlangan yangi qo‘shimcha ishlar:*\n`;
-    if (selectedWorks.length === 0) message += `❌ Hali hech narsa tanlanmagan\n`;
-    else selectedWorks.forEach(w => message += `✅ ${w}\n`);
-    message += `\n*Yangi qo‘shimcha ishlarni tanlang:*`;
-    
-    const buttons = EXTRA_WORKS.map(work => {
-        const isSelected = selectedWorks.includes(work);
-        return [Markup.button.callback(`${isSelected ? '☑️' : '⬜'} ${work}`, `extra_add_${work.replace(/\s/g, '_')}`)];
-    });
-    buttons.push([Markup.button.callback('✅ Tugatish va summa kiritish', 'finish_add_extra')]);
-    buttons.push([Markup.button.callback('❌ Bekor qilish', 'cancel_add_extra')]);
-    
-    await ctx.editMessageText(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) });
-    await ctx.answerCbQuery();
-});
-
-// Qo'shimcha ishlarni tugatish
-bot.action('finish_add_extra', async (ctx) => {
-    if (!isAdminById(ctx)) return;
-    const stepData = extraAmountSteps.get(ctx.from.id);
-    if (!stepData || stepData.step !== 'select_works') return;
-    
-    stepData.step = 'waiting_amount';
-    extraAmountSteps.set(ctx.from.id, stepData);
-    
-    await ctx.editMessageText(
-        `➕ *QO'SHIMCHA SUMMA KIRITING*\n\n` +
-        `🚗 Avtomobil: ${stepData.carNumber}\n` +
-        `📋 Tanlangan yangi ishlar: ${stepData.selectedWorks.join(', ') || 'Yo‘q'}\n\n` +
-        `*Yangi qo‘shimcha summani kiriting (faqat raqam):*\n` +
-        `Misol: 50000\n` +
-        `⚠️ Bu summa mavjud summaga QO'SHILADI`,
-        { parse_mode: 'Markdown' }
-    );
-    await ctx.answerCbQuery();
-});
-
-// Bekor qilish
-bot.action('cancel_add_extra', async (ctx) => {
-    extraAmountSteps.delete(ctx.from.id);
-    await ctx.editMessageText('❌ Qo‘shimcha summa qo‘shish bekor qilindi');
-    await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
-    await ctx.answerCbQuery();
-});
-
 // ============ REGISTRATSIYA ============
 bot.command('start', async (ctx) => {
     if (isAllowed(ctx)) {
@@ -1002,75 +896,8 @@ bot.on('text', async (ctx) => {
     const deleteStep = deleteSteps.get(ctx.from.id);
     const extraStep = extraAmountStep.get(ctx.from.id);
     const editData = editSteps.get(ctx.from.id);
-    const extraAddStep = extraAmountSteps.get(ctx.from.id);
     
-    // ============ QO'SHIMCHA SUMMA QO'SHISH UCHUN AVTOMOBIL RAQAMI ============
-    if (extraAddStep && extraAddStep.step === 'waiting_car_number') {
-        if (!isAdminById(ctx)) return;
-        if (!isValidPlate(text)) {
-            return ctx.reply(`❌ *Noto‘g‘ri format!*\n\nQabul qilinadigan formatlar:\n• 01A777AA | 01A111111 | 01111AAA\n• A777AA | 123ABC | 01AA777 | AA777AA`, { parse_mode: 'Markdown' });
-        }
-        extraAmountSteps.delete(ctx.from.id);
-        await showAddExtraAmountMenu(ctx, text.toUpperCase());
-        return;
-    }
-    
-    // ============ QO'SHIMCHA SUMMA KIRITISH (YANGI) ============
-    if (extraAddStep && extraAddStep.step === 'waiting_amount') {
-        if (!isAdminById(ctx)) return;
-        let extraAmount = 0;
-        const parsed = parseInt(text.replace(/[^0-9]/g, ''));
-        if (isNaN(parsed)) {
-            return ctx.reply('❌ Noto‘g‘ri format! Iltimos, faqat raqam kiriting. Misol: 50000');
-        }
-        extraAmount = parsed;
-        
-        const car = findCarByNumber(extraAddStep.carNumber);
-        if (!car) {
-            extraAmountSteps.delete(ctx.from.id);
-            return ctx.reply('❌ Avtomobil topilmadi!');
-        }
-        
-        // Yangi qo'shimcha ishlarni mavjudlariga qo'shamiz
-        const allExtraWorks = [...(car.extra_works || []), ...extraAddStep.selectedWorks];
-        const uniqueWorks = [...new Set(allExtraWorks)]; // Dublikatlarni olib tashlash
-        
-        const newExtraAmount = (car.extra_amount || 0) + extraAmount;
-        const newTotalPrice = BASE_PRICE + newExtraAmount;
-        
-        updateCar(extraAddStep.carNumber, {
-            extra_works: uniqueWorks,
-            extra_amount: newExtraAmount,
-            narxi: newTotalPrice
-        });
-        
-        extraAmountSteps.delete(ctx.from.id);
-        
-        await ctx.reply(
-            `✅ *Qo‘shimcha summa qo‘shildi!*\n\n` +
-            `🚗 *Avtomobil:* ${car.raqam}\n` +
-            `📋 *Qo‘shimcha ishlar:* ${uniqueWorks.join(', ') || 'Yo‘q'}\n` +
-            `💰 *Qo‘shilgan summa:* +${extraAmount.toLocaleString()} so‘m\n` +
-            `💎 *Yangi jami summa:* ${newTotalPrice.toLocaleString()} so‘m`,
-            { parse_mode: 'Markdown' }
-        );
-        
-        // Kuzatuvchilarga xabar yuborish
-        await sendToAllObservers(
-            `➕ *AVTOMOBILGA QO'SHIMCHA SUMMA QO'SHILDI!*\n\n` +
-            `🚗 *Avtomobil:* ${car.raqam}\n` +
-            `📋 *Yangi qo‘shimcha ishlar:* ${extraAddStep.selectedWorks.join(', ') || 'Yo‘q'}\n` +
-            `💰 *Qo‘shilgan summa:* +${extraAmount.toLocaleString()} so‘m\n` +
-            `💎 *Yangi jami summa:* ${newTotalPrice.toLocaleString()} so‘m\n` +
-            `👤 *Admin:* ${ctx.from.first_name}`,
-            { parse_mode: 'Markdown' }
-        );
-        
-        await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
-        return;
-    }
-    
-    // Qo'shimcha summa kiritish (avvalgi funksiya)
+    // Qo'shimcha summa kiritish
     if (extraStep && extraStep.step === 'waiting_for_amount') {
         if (!isAdminById(ctx)) return;
         let extraAmount = 0;
@@ -1154,16 +981,6 @@ bot.on('text', async (ctx) => {
     if (text === '✏️ Ma\'lumot tahrirlash' && isAdminById(ctx)) {
         deleteSteps.set(ctx.from.id, { step: 'edit_car_number' });
         return ctx.reply(`✏️ *TAHRIRLANADIGAN AVTOMOBIL RAQAMINI KIRITING*\n\nMisol: 01A777AA\n⚠️ Faqat bazada mavjud avtomobillarni tahrirlash mumkin.`, { parse_mode: 'Markdown' });
-    }
-    
-    if (text === '➕ Qo\'shimcha summa qo\'shish' && isAdminById(ctx)) {
-        extraAmountSteps.set(ctx.from.id, { step: 'waiting_car_number' });
-        return ctx.reply(
-            `➕ *QO'SHIMCHA SUMMA QO'SHISH*\n\n` +
-            `Qo'shimcha summa qo'shiladigan avtomobil raqamini kiriting:\n\n` +
-            `Misol: 01A777AA`,
-            { parse_mode: 'Markdown' }
-        );
     }
     
     if (text === '🗑️ Avtomobil o\'chirish' && isSuperAdminById(ctx)) {
