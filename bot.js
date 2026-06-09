@@ -127,7 +127,7 @@ function savePayments(payments) {
     fs.writeFileSync(PAYMENTS_FILE, JSON.stringify(payments, null, 2));
 }
 
-// Diagnostika to'langanligini tekshirish
+// Diagnostika to'langanligini tekshirish (diagnostic_id bo'yicha)
 function isDiagnosticPaid(diagnosticId) {
     const payments = loadPayments();
     return payments.some(p => p.diagnostic_id === diagnosticId);
@@ -143,7 +143,7 @@ function getUnpaidDiagnostics() {
     return unpaid;
 }
 
-// To'langan diagnostikalarni olish
+// To'langan diagnostikalarni olish (diagnostic_id bo'yicha)
 function getPaidDiagnostics() {
     const payments = loadPayments();
     const diagnostics = loadDiagnostics();
@@ -591,7 +591,7 @@ bot.action('cancel_edit', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ DIAGNOSTIKALAR RO'YXATI ============
+// ============ DIAGNOSTIKALAR RO'YXATI (TO'G'RILANGAN) ============
 async function showAllDiagnostics(ctx, page = 0) {
     const diagnostics = getAllDiagnostics();
     if (diagnostics.length === 0) {
@@ -606,6 +606,7 @@ async function showAllDiagnostics(ctx, page = 0) {
     const pageDiagnostics = diagnostics.slice(start, end);
     
     const payments = loadPayments();
+    // diagnostic_id bo'yicha tekshirish
     const paidIds = new Set(payments.map(p => p.diagnostic_id));
     
     let message = '🚗 *DIAGNOSTIKALAR RO\'YXATI*\n';
@@ -615,6 +616,7 @@ async function showAllDiagnostics(ctx, page = 0) {
     for (let idx = 0; idx < pageDiagnostics.length; idx++) {
         const d = pageDiagnostics[idx];
         const num = start + idx + 1;
+        // To'g'ri tekshirish: diagnostic_id bo'yicha
         const isPaid = paidIds.has(d.id);
         const paidIcon = isPaid ? '✅' : '⏳';
         const paidText = isPaid ? 'To‘langan' : 'To‘lov kutilmoqda';
@@ -666,7 +668,7 @@ bot.action('close_diagnostics', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ TO'LANGAN DIAGNOSTIKALAR ============
+// ============ TO'LANGAN DIAGNOSTIKALAR (TO'G'RILANGAN) ============
 async function showPaidDiagnostics(ctx, page = 0) {
     const paidDiagnostics = getPaidDiagnostics();
     if (paidDiagnostics.length === 0) {
@@ -1589,18 +1591,18 @@ bot.command('check', async (ctx) => {
     message += `📊 Diagnostikalar soni: ${diagnostics.length}\n`;
     message += `💰 To'lovlar soni: ${payments.length}\n\n`;
     
-    message += '*📋 DIAGNOSTIKALAR:*\n';
-    diagnostics.forEach(d => {
+    message += '*📋 DIAGNOSTIKALAR (oxirgi 10):*\n';
+    for (const d of diagnostics.slice(0, 10)) {
         const isPaid = payments.some(p => p.diagnostic_id === d.id);
         const status = isPaid ? '✅ TOLANGAN' : '⏳ TOLANMAGAN';
-        message += `ID: ${d.id} | ${d.raqam} | ${d.diagnostika} | ${d.narxi.toLocaleString()} so‘m | ${status}\n`;
-    });
+        message += `ID: ${d.id} | ${d.raqam} | ${d.narxi.toLocaleString()} so‘m | ${status}\n`;
+    }
     
     if (payments.length > 0) {
-        message += '\n*💵 TO\'LOVLAR:*\n';
-        payments.forEach(p => {
-            message += `ID: ${p.id} | Diagnostic ID: ${p.diagnostic_id} | ${p.car_number} | ${p.amount.toLocaleString()} so‘m\n`;
-        });
+        message += '\n*💵 TO\'LOVLAR (oxirgi 10):*\n';
+        for (const p of payments.slice(-10)) {
+            message += `Diagnostic ID: ${p.diagnostic_id} | ${p.car_number} | ${p.amount.toLocaleString()} so‘m\n`;
+        }
     }
     
     await ctx.reply(message, { parse_mode: 'Markdown' });
