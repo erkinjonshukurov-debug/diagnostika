@@ -147,14 +147,22 @@ function getUnpaidDiagnostics() {
     return unpaid;
 }
 
-// To'langan diagnostikalarni olish
+// To'langan diagnostikalarni olish (ENG YANGISI BIRINCHI)
 function getPaidDiagnostics() {
     const payments = loadPayments();
     const diagnostics = loadDiagnostics();
     const result = [];
     const processedIds = new Set();
     
-    for (const payment of payments) {
+    // To'lovlarni sanasi bo'yicha ENG YANGISIDAN ESKIGA saralash
+    const sortedPayments = [...payments].sort((a, b) => {
+        // paid_date ni solishtirish
+        const dateA = new Date(a.paid_date);
+        const dateB = new Date(b.paid_date);
+        return dateB - dateA; // Yangisi oldinga
+    });
+    
+    for (const payment of sortedPayments) {
         // Avval diagnostic_id bo'yicha qidiramiz
         let diagnostic = diagnostics.find(d => d.id === payment.diagnostic_id);
         
@@ -209,6 +217,7 @@ function addMultiplePayments(diagnosticIds, adminName) {
     let payments = loadPayments();
     let totalAmount = 0;
     const newPayments = [];
+    const newPaymentInfos = [];
     
     for (const diagnosticId of diagnosticIds) {
         const diagnostic = diagnostics.find(d => d.id === diagnosticId);
@@ -222,22 +231,28 @@ function addMultiplePayments(diagnosticIds, adminName) {
         }
         if (alreadyPaid) continue;
         
+        const paidDate = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
         const payment = {
             id: Date.now(),
             diagnostic_id: diagnosticId,
             car_number: diagnostic.raqam,
             amount: diagnostic.narxi,
             admin_name: adminName,
-            paid_date: new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' })
+            paid_date: paidDate
         };
         newPayments.push(payment);
+        newPaymentInfos.push({
+            car_number: diagnostic.raqam,
+            amount: diagnostic.narxi,
+            paid_date: paidDate
+        });
         totalAmount += diagnostic.narxi;
     }
     
     if (newPayments.length > 0) {
         savePayments([...payments, ...newPayments]);
     }
-    return { count: newPayments.length, totalAmount };
+    return { count: newPayments.length, totalAmount, newPayments: newPaymentInfos };
 }
 
 // To'lovni o'chirish
@@ -621,7 +636,7 @@ bot.action('cancel_edit', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ DIAGNOSTIKALAR RO'YXATI (TO'G'RILANGAN) ============
+// ============ DIAGNOSTIKALAR RO'YXATI ============
 async function showAllDiagnostics(ctx, page = 0) {
     const diagnostics = getAllDiagnostics();
     if (diagnostics.length === 0) {
@@ -701,7 +716,7 @@ bot.action('close_diagnostics', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ TO'LANGAN DIAGNOSTIKALAR ============
+// ============ TO'LANGAN DIAGNOSTIKALAR (YANGI TARTIBDA) ============
 async function showPaidDiagnostics(ctx, page = 0) {
     const paidDiagnostics = getPaidDiagnostics();
     if (paidDiagnostics.length === 0) {
@@ -709,14 +724,15 @@ async function showPaidDiagnostics(ctx, page = 0) {
         return;
     }
     
-    const itemsPerPage = 3;
+    const itemsPerPage = 5;
     const totalPages = Math.ceil(paidDiagnostics.length / itemsPerPage);
     const start = page * itemsPerPage;
     const end = start + itemsPerPage;
     const pageItems = paidDiagnostics.slice(start, end);
     
     let message = '✅ *TO‘LANGAN DIAGNOSTIKALAR*\n';
-    message += `📊 *Jami:* ${paidDiagnostics.length} ta | 📄 *Sahifa ${page + 1}/${totalPages}*\n\n`;
+    message += `📊 *Jami:* ${paidDiagnostics.length} ta | 📄 *Sahifa ${page + 1}/${totalPages}*\n`;
+    message += `🔄 *Eng yangi to‘langanlar birinchi ko‘rinadi*\n\n`;
     
     pageItems.forEach((item, idx) => {
         const num = start + idx + 1;
@@ -724,10 +740,12 @@ async function showPaidDiagnostics(ctx, page = 0) {
         message += `${num}. *${d.raqam}* | ${d.turi}\n`;
         message += `   🆔 ID: \`${d.id}\`\n`;
         message += `   💰 ${item.amount.toLocaleString()} so‘m\n`;
-        message += `   📅 ${item.paid_date.split(',')[0]} | 👤 ${item.admin_name}\n\n`;
+        message += `   📅 To‘langan vaqt: ${item.paid_date}\n`;
+        message += `   👤 Admin: ${item.admin_name}\n\n`;
     });
     
-    message += `💰 *Jami to‘langan summa:* ${getPaidSum().toLocaleString()} so‘m`;
+    const totalPaidSum = paidDiagnostics.reduce((sum, p) => sum + p.amount, 0);
+    message += `💰 *Jami to‘langan summa:* ${totalPaidSum.toLocaleString()} so‘m`;
     
     const navButtons = [];
     if (page > 0) navButtons.push(Markup.button.callback('◀️ Oldingi', `paid_page_${page - 1}`));
@@ -887,11 +905,22 @@ bot.action('unpaid_confirm', async (ctx) => {
         diagnosticsList += `${idx + 1}. ${d.raqam} | ${d.turi} | ${d.narxi.toLocaleString()} so‘m | ID: ${d.id}\n`;
     });
     
+    // Yangi to'langanlar ro'yxatini alohida ko'rsatish
+    let newPaidMessage = '';
+    if (result.newPayments && result.newPayments.length > 0) {
+        newPaidMessage = '\n🆕 *YANGI TO‘LANGANLAR:*\n';
+        result.newPayments.forEach((p, idx) => {
+            newPaidMessage += `${idx + 1}. ${p.car_number} | ${p.amount.toLocaleString()} so‘m | ${p.paid_date}\n`;
+        });
+        newPaidMessage += '\n';
+    }
+    
     await sendToAllObservers(
         `✅ *TO‘LOV TASDIQLANDI!*\n\n` +
         `🚗 *To‘lov qilingan diagnostikalar:*\n${diagnosticsList}\n` +
         `💰 *Jami summa:* ${result.totalAmount.toLocaleString()} so‘m\n` +
-        `👤 *Admin:* ${ctx.from.first_name}\n\n` +
+        `👤 *Admin:* ${ctx.from.first_name}\n` +
+        newPaidMessage +
         `📊 *Jami diagnostika summasi:* ${totalDiagnosed.toLocaleString()} so‘m\n` +
         `💵 *To‘lov qilingan umumiy summa:* ${newPaidSum.toLocaleString()} so‘m\n` +
         `📉 *Qolgan qoldiq:* ${remainingSum.toLocaleString()} so‘m`,
@@ -1169,7 +1198,8 @@ bot.command('fixpayments', async (ctx) => {
         `✅ *TO'LOVLAR TUZATILDI!*\n\n` +
         `🔧 Tuzatilgan to'lovlar: ${fixedCount} ta\n` +
         `💰 Jami to'lovlar: ${newPayments.length} ta\n\n` +
-        `📊 Endi "📋 Diagnostikalar" da to'lov holatlari to'g'ri ko'rinadi.`,
+        `📊 Endi "📋 Diagnostikalar" da to'lov holatlari to'g'ri ko'rinadi.\n` +
+        `📅 Endi "✅ To'langanlar" da eng yangi to'langanlar birinchi chiqadi.`,
         { parse_mode: 'Markdown' }
     );
 });
@@ -1684,9 +1714,10 @@ bot.command('check', async (ctx) => {
     }
     
     if (payments.length > 0) {
-        message += '\n*💵 TO\'LOVLAR (oxirgi 10):*\n';
-        for (const p of payments.slice(-10)) {
-            message += `Diagnostic ID: ${p.diagnostic_id} | ${p.car_number} | ${p.amount.toLocaleString()} so‘m\n`;
+        message += '\n*💵 TO\'LOVLAR (oxirgi 10, yangisi birinchi):*\n';
+        const sortedPayments = [...payments].sort((a, b) => new Date(b.paid_date) - new Date(a.paid_date));
+        for (const p of sortedPayments.slice(0, 10)) {
+            message += `Diagnostic ID: ${p.diagnostic_id} | ${p.car_number} | ${p.amount.toLocaleString()} so‘m | ${p.paid_date}\n`;
         }
     }
     
@@ -1701,6 +1732,7 @@ console.log(`📞 Kuzatuvchi telefonlari: ${OBSERVER_PHONES.join(', ')}`);
 console.log(`💰 Asosiy diagnostika narxi: ${BASE_PRICE.toLocaleString()} so‘m`);
 console.log(`📁 Diagnostikalar fayli: diagnostics.json`);
 console.log(`💰 To'lovlar fayli: payments.json`);
+console.log(`✅ To'langanlar ro'yxati eng yangi to'langanlar birinchi chiqadi`);
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
