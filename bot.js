@@ -127,36 +127,51 @@ function savePayments(payments) {
     fs.writeFileSync(PAYMENTS_FILE, JSON.stringify(payments, null, 2));
 }
 
-// Diagnostika to'langanligini tekshirish (diagnostic_id bo'yicha)
-function isDiagnosticPaid(diagnosticId) {
+// Diagnostika to'langanligini tekshirish (diagnostic_id yoki raqam bo'yicha)
+function isDiagnosticPaid(diagnostic) {
     const payments = loadPayments();
-    return payments.some(p => p.diagnostic_id === diagnosticId);
+    // Avval diagnostic_id bo'yicha tekshiramiz
+    let isPaid = payments.some(p => p.diagnostic_id === diagnostic.id);
+    // Agar topilmasa, raqam bo'yicha tekshiramiz
+    if (!isPaid) {
+        isPaid = payments.some(p => p.car_number === diagnostic.raqam);
+    }
+    return isPaid;
 }
 
 // To'lanmagan diagnostikalarni olish
 function getUnpaidDiagnostics() {
     const diagnostics = loadDiagnostics();
     const diagnosed = diagnostics.filter(d => d.diagnostika === '✅ o‘tkazildi');
-    const payments = loadPayments();
-    const paidIds = new Set(payments.map(p => p.diagnostic_id));
-    const unpaid = diagnosed.filter(d => !paidIds.has(d.id));
+    const unpaid = diagnosed.filter(d => !isDiagnosticPaid(d));
     return unpaid;
 }
 
-// To'langan diagnostikalarni olish (diagnostic_id bo'yicha)
+// To'langan diagnostikalarni olish
 function getPaidDiagnostics() {
     const payments = loadPayments();
     const diagnostics = loadDiagnostics();
     const result = [];
+    const processedIds = new Set();
+    
     for (const payment of payments) {
-        const diagnostic = diagnostics.find(d => d.id === payment.diagnostic_id);
-        if (diagnostic) {
+        // Avval diagnostic_id bo'yicha qidiramiz
+        let diagnostic = diagnostics.find(d => d.id === payment.diagnostic_id);
+        
+        // Agar topilmasa, raqam bo'yicha qidiramiz
+        if (!diagnostic) {
+            diagnostic = diagnostics.find(d => d.raqam === payment.car_number);
+        }
+        
+        if (diagnostic && !processedIds.has(diagnostic.id)) {
+            processedIds.add(diagnostic.id);
             result.push({
                 ...payment,
                 diagnostic: diagnostic
             });
         }
     }
+    
     return result;
 }
 
@@ -167,7 +182,12 @@ function addPayment(diagnosticId, adminName) {
     if (!diagnostic) return null;
     
     const payments = loadPayments();
-    const existing = payments.find(p => p.diagnostic_id === diagnosticId);
+    // Avval diagnostic_id bo'yicha tekshiramiz
+    let existing = payments.find(p => p.diagnostic_id === diagnosticId);
+    // Agar topilmasa, raqam bo'yicha tekshiramiz
+    if (!existing) {
+        existing = payments.find(p => p.car_number === diagnostic.raqam);
+    }
     if (existing) return null;
     
     const payment = {
@@ -194,7 +214,12 @@ function addMultiplePayments(diagnosticIds, adminName) {
         const diagnostic = diagnostics.find(d => d.id === diagnosticId);
         if (!diagnostic) continue;
         
-        const alreadyPaid = payments.some(p => p.diagnostic_id === diagnosticId);
+        // Avval diagnostic_id bo'yicha tekshiramiz
+        let alreadyPaid = payments.some(p => p.diagnostic_id === diagnosticId);
+        // Agar topilmasa, raqam bo'yicha tekshiramiz
+        if (!alreadyPaid) {
+            alreadyPaid = payments.some(p => p.car_number === diagnostic.raqam);
+        }
         if (alreadyPaid) continue;
         
         const payment = {
@@ -218,7 +243,12 @@ function addMultiplePayments(diagnosticIds, adminName) {
 // To'lovni o'chirish
 function removePayment(diagnosticId) {
     const payments = loadPayments();
-    const newPayments = payments.filter(p => p.diagnostic_id !== diagnosticId);
+    const diagnostic = loadDiagnostics().find(d => d.id === diagnosticId);
+    if (!diagnostic) return;
+    
+    const newPayments = payments.filter(p => 
+        p.diagnostic_id !== diagnosticId && p.car_number !== diagnostic.raqam
+    );
     savePayments(newPayments);
 }
 
@@ -281,7 +311,7 @@ function updateDiagnostic(diagnosticId, updates) {
     if (index === -1) return false;
     
     if (updates.diagnostika && updates.diagnostika !== diagnostics[index].diagnostika) {
-        if (isDiagnosticPaid(diagnosticId)) {
+        if (isDiagnosticPaid(diagnostics[index])) {
             removePayment(diagnosticId);
         }
     }
@@ -302,10 +332,10 @@ function getStats() {
     const notDiagnosed = diagnostics.filter(d => d.diagnostika.includes('o‘tkazilmadi'));
     const totalSum = diagnosed.reduce((sum, d) => sum + d.narxi, 0);
     
-    const payments = loadPayments();
-    const paidSum = payments.reduce((sum, p) => sum + p.amount, 0);
+    const paidDiagnostics = getPaidDiagnostics();
+    const paidSum = paidDiagnostics.reduce((sum, p) => sum + p.amount, 0);
     const remainingSum = totalSum - paidSum;
-    const paidCount = payments.length;
+    const paidCount = paidDiagnostics.length;
     
     return { 
         total: diagnostics.length, 
@@ -329,8 +359,8 @@ function getTotalDiagnosedSum() {
 }
 
 function getPaidSum() {
-    const payments = loadPayments();
-    return payments.reduce((sum, p) => sum + p.amount, 0);
+    const paidDiagnostics = getPaidDiagnostics();
+    return paidDiagnostics.reduce((sum, p) => sum + p.amount, 0);
 }
 
 // ============ XABAR YUBORISH ============
@@ -606,8 +636,6 @@ async function showAllDiagnostics(ctx, page = 0) {
     const pageDiagnostics = diagnostics.slice(start, end);
     
     const payments = loadPayments();
-    // diagnostic_id bo'yicha tekshirish
-    const paidIds = new Set(payments.map(p => p.diagnostic_id));
     
     let message = '🚗 *DIAGNOSTIKALAR RO\'YXATI*\n';
     message += `📊 *Jami:* ${diagnostics.length} ta | 📄 *Sahifa ${page + 1}/${totalPages}*\n`;
@@ -616,8 +644,13 @@ async function showAllDiagnostics(ctx, page = 0) {
     for (let idx = 0; idx < pageDiagnostics.length; idx++) {
         const d = pageDiagnostics[idx];
         const num = start + idx + 1;
-        // To'g'ri tekshirish: diagnostic_id bo'yicha
-        const isPaid = paidIds.has(d.id);
+        
+        // To'lovni tekshirish: avval diagnostic_id, keyin raqam bo'yicha
+        let isPaid = payments.some(p => p.diagnostic_id === d.id);
+        if (!isPaid) {
+            isPaid = payments.some(p => p.car_number === d.raqam);
+        }
+        
         const paidIcon = isPaid ? '✅' : '⏳';
         const paidText = isPaid ? 'To‘langan' : 'To‘lov kutilmoqda';
         
@@ -668,7 +701,7 @@ bot.action('close_diagnostics', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ TO'LANGAN DIAGNOSTIKALAR (TO'G'RILANGAN) ============
+// ============ TO'LANGAN DIAGNOSTIKALAR ============
 async function showPaidDiagnostics(ctx, page = 0) {
     const paidDiagnostics = getPaidDiagnostics();
     if (paidDiagnostics.length === 0) {
@@ -1096,6 +1129,51 @@ async function createBackup(ctx) {
     }
 }
 
+// ============ TO'LOVLARNI TUZATISH ============
+bot.command('fixpayments', async (ctx) => {
+    if (!isSuperAdminById(ctx)) return;
+    
+    const diagnostics = loadDiagnostics();
+    let payments = loadPayments();
+    let fixedCount = 0;
+    let newPayments = [];
+    
+    // Mavjud to'lovlarni tahlil qilamiz
+    for (const payment of payments) {
+        // Avval diagnostic_id bo'yicha diagnostikani topamiz
+        let diagnostic = diagnostics.find(d => d.id === payment.diagnostic_id);
+        
+        // Agar topilmasa, raqam bo'yicha topamiz
+        if (!diagnostic) {
+            diagnostic = diagnostics.find(d => d.raqam === payment.car_number);
+        }
+        
+        if (diagnostic) {
+            newPayments.push({
+                id: payment.id,
+                diagnostic_id: diagnostic.id,
+                car_number: diagnostic.raqam,
+                amount: diagnostic.narxi,
+                admin_name: payment.admin_name,
+                paid_date: payment.paid_date
+            });
+            if (payment.diagnostic_id !== diagnostic.id) {
+                fixedCount++;
+            }
+        }
+    }
+    
+    savePayments(newPayments);
+    
+    await ctx.reply(
+        `✅ *TO'LOVLAR TUZATILDI!*\n\n` +
+        `🔧 Tuzatilgan to'lovlar: ${fixedCount} ta\n` +
+        `💰 Jami to'lovlar: ${newPayments.length} ta\n\n` +
+        `📊 Endi "📋 Diagnostikalar" da to'lov holatlari to'g'ri ko'rinadi.`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
 // ============ XABAR BOSHQARISH ============
 const addSteps = new Map();
 const deleteSteps = new Map();
@@ -1138,6 +1216,12 @@ bot.on('text', async (ctx) => {
         extraAmountSteps.delete(ctx.from.id);
         editSteps.delete(ctx.from.id);
         await ctx.reply('❌ Barcha jarayonlar bekor qilindi', getMainMenu(ctx));
+        return;
+    }
+    
+    // TO'LOVLARNI TUZATISH
+    if (text === '/fixpayments' && isSuperAdminById(ctx)) {
+        // Bu yuqorida qo'shilgan
         return;
     }
     
@@ -1209,7 +1293,7 @@ bot.on('text', async (ctx) => {
             narxi: newTotalPrice
         });
         
-        if (isDiagnosticPaid(extraAddStep.diagnosticId)) {
+        if (isDiagnosticPaid(diagnostic)) {
             removePayment(extraAddStep.diagnosticId);
             await ctx.reply(`⚠️ Diqqat! Diagnostika to'lov holatidan chiqarildi, chunki unga o'zgartirish kiritildi.`);
         }
@@ -1272,7 +1356,8 @@ bot.on('text', async (ctx) => {
         const newNarxi = BASE_PRICE + extraAmount;
         updateDiagnostic(editData.diagnosticId, { extra_works: editData.currentExtra || [], extra_amount: extraAmount, narxi: newNarxi });
         
-        if (isDiagnosticPaid(editData.diagnosticId)) {
+        const diagnostic = findDiagnosticById(editData.diagnosticId);
+        if (diagnostic && isDiagnosticPaid(diagnostic)) {
             removePayment(editData.diagnosticId);
             await ctx.reply(`⚠️ Diqqat! Diagnostika to'lov holatidan chiqarildi, chunki unga o'zgartirish kiritildi.`);
         }
@@ -1593,7 +1678,7 @@ bot.command('check', async (ctx) => {
     
     message += '*📋 DIAGNOSTIKALAR (oxirgi 10):*\n';
     for (const d of diagnostics.slice(0, 10)) {
-        const isPaid = payments.some(p => p.diagnostic_id === d.id);
+        const isPaid = payments.some(p => p.diagnostic_id === d.id) || payments.some(p => p.car_number === d.raqam);
         const status = isPaid ? '✅ TOLANGAN' : '⏳ TOLANMAGAN';
         message += `ID: ${d.id} | ${d.raqam} | ${d.narxi.toLocaleString()} so‘m | ${status}\n`;
     }
