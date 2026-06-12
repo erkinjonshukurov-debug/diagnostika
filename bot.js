@@ -36,33 +36,6 @@ const EXTRA_WORKS = [
     '🔋 Elektr tizimi'
 ];
 
-// ============ BONUS SISTEMASI ============
-// 5 ta to'langan diagnostikadan keyin 1 ta BEPUL (5+1 tekin)
-const BONUS_CONFIG = {
-    FREE_AFTER_PAID: 5,     // 5 ta to'langan diagnostikadan keyin
-    ENABLED: true
-};
-
-// ============ TOSHKENT VAQTI (TO'G'RI) ============
-function getTashkentTime() {
-    const now = new Date();
-    // Toshkent UTC+5 (yozgi vaqtga o'tish yo'q)
-    const tashkentOffset = 5 * 60 * 60 * 1000;
-    const tashkentTime = new Date(now.getTime() + tashkentOffset);
-    return tashkentTime;
-}
-
-function formatTashkentDateTime() {
-    const date = getTashkentTime();
-    const year = date.getUTCFullYear();
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(date.getUTCDate()).padStart(2, '0');
-    const hours = String(date.getUTCHours()).padStart(2, '0');
-    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-    const seconds = String(date.getUTCSeconds()).padStart(2, '0');
-    return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
-}
-
 // ============ TELEFON RAQAMINI TEKSHIRISH ============
 function cleanPhone(phone) {
     return phone.replace(/^\+/, '').replace(/\s/g, '');
@@ -74,14 +47,6 @@ function isAdminPhone(phone) {
 
 function isObserverPhone(phone) {
     return OBSERVER_PHONES.some(p => cleanPhone(p) === cleanPhone(phone));
-}
-
-// Foydalanuvchi telefon raqamini saqlash
-let userPhoneMap = new Map();
-
-// Admin telefon raqamini ID bo'yicha olish
-function getAdminPhoneByUserId(userId) {
-    return userPhoneMap.get(userId) || null;
 }
 
 // ============ AVTOMOBIL RAQAMINI TEKSHIRISH ============
@@ -107,13 +72,11 @@ const DB_FILE = path.join(__dirname, 'diagnostics.json');
 const ADMIN_FILE = path.join(__dirname, 'admin_ids.json');
 const OBSERVER_FILE = path.join(__dirname, 'observer_ids.json');
 const PAYMENTS_FILE = path.join(__dirname, 'payments.json');
-const BONUS_USAGE_FILE = path.join(__dirname, 'bonus_usage.json');
 
 if (!fs.existsSync(DB_FILE)) fs.writeFileSync(DB_FILE, JSON.stringify([], null, 2));
 if (!fs.existsSync(ADMIN_FILE)) fs.writeFileSync(ADMIN_FILE, JSON.stringify({ userIds: [] }, null, 2));
 if (!fs.existsSync(OBSERVER_FILE)) fs.writeFileSync(OBSERVER_FILE, JSON.stringify({ userIds: [] }, null, 2));
 if (!fs.existsSync(PAYMENTS_FILE)) fs.writeFileSync(PAYMENTS_FILE, JSON.stringify([], null, 2));
-if (!fs.existsSync(BONUS_USAGE_FILE)) fs.writeFileSync(BONUS_USAGE_FILE, JSON.stringify({ usedFree: [] }, null, 2));
 
 function saveAdminIds(userIds) {
     registeredAdminIds = new Set(userIds);
@@ -142,6 +105,7 @@ function loadObserverIds() {
 loadAdminIds();
 loadObserverIds();
 
+// Barcha diagnostikalarni olish
 function loadDiagnostics() {
     const diagnostics = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     return diagnostics.sort((a, b) => b.id - a.id);
@@ -163,136 +127,19 @@ function savePayments(payments) {
     fs.writeFileSync(PAYMENTS_FILE, JSON.stringify(payments, null, 2));
 }
 
-function loadBonusUsage() {
-    try {
-        return JSON.parse(fs.readFileSync(BONUS_USAGE_FILE, 'utf8'));
-    } catch(e) {
-        return { usedFree: [] };
-    }
-}
-
-function saveBonusUsage(data) {
-    fs.writeFileSync(BONUS_USAGE_FILE, JSON.stringify(data, null, 2));
-}
-
-// ============ BONUS FUNKSIYALARI (5+1 SISTEMA) ============
-// Adminning to'langan diagnostikalari sonini olish
-function getAdminPaidCount(adminPhone) {
-    const diagnostics = loadDiagnostics();
-    const payments = loadPayments();
-    
-    const cleanAdminPhone = cleanPhone(adminPhone);
-    const adminDiagnostics = diagnostics.filter(d => 
-        cleanPhone(d.admin_phone) === cleanAdminPhone
-    );
-    
-    const paidDiagnostics = adminDiagnostics.filter(d => 
-        payments.some(p => p.diagnostic_id === d.id || cleanPhone(p.car_number) === cleanPhone(d.raqam))
-    );
-    
-    return paidDiagnostics.length;
-}
-
-// Adminning bonus ma'lumotlari
-function getBonusInfo(adminPhone) {
-    const paidCount = getAdminPaidCount(adminPhone);
-    const bonusUsage = loadBonusUsage();
-    const cleanAdminPhone = cleanPhone(adminPhone);
-    
-    // Ishlatilgan bepul diagnostikalar
-    const usedFreeCount = bonusUsage.usedFree.filter(u => cleanPhone(u.admin_phone) === cleanAdminPhone).length;
-    
-    // Har 5 ta to'lov uchun 1 ta bepul (5+1 sistema)
-    const expectedFree = Math.floor(paidCount / BONUS_CONFIG.FREE_AFTER_PAID);
-    const availableFree = expectedFree - usedFreeCount;
-    
-    // 5 tadan qanchasi qolgan?
-    const remainingForNextFree = BONUS_CONFIG.FREE_AFTER_PAID - (paidCount % BONUS_CONFIG.FREE_AFTER_PAID);
-    
-    return {
-        totalPaid: paidCount,
-        usedFree: usedFreeCount,
-        availableFree: availableFree,
-        remainingForNextFree: remainingForNextFree === BONUS_CONFIG.FREE_AFTER_PAID ? 0 : remainingForNextFree,
-        expectedTotalFree: expectedFree
-    };
-}
-
-// Bepul diagnostika ishlatish mumkinmi?
-function canUseFreeDiagnostic(adminPhone) {
-    const { availableFree } = getBonusInfo(adminPhone);
-    return availableFree > 0;
-}
-
-// Bepul diagnostika ishlatish
-function useFreeDiagnostic(adminPhone, diagnosticId) {
-    const bonusUsage = loadBonusUsage();
-    bonusUsage.usedFree.push({
-        admin_phone: cleanPhone(adminPhone),
-        diagnostic_id: diagnosticId,
-        used_date: formatTashkentDateTime()
-    });
-    saveBonusUsage(bonusUsage);
-}
-
-// Narxni bonus bilan hisoblash
-function calculatePriceWithBonus(adminPhone, extraAmount = 0) {
-    if (!BONUS_CONFIG.ENABLED) {
-        return { totalPrice: BASE_PRICE + extraAmount, discount: 0, isFree: false };
-    }
-    
-    const { availableFree } = getBonusInfo(adminPhone);
-    
-    if (availableFree > 0) {
-        return { totalPrice: 0, discount: BASE_PRICE + extraAmount, isFree: true };
-    }
-    
-    return { totalPrice: BASE_PRICE + extraAmount, discount: 0, isFree: false };
-}
-
-// Bonus hisobotini ko'rsatish
-async function showBonusReport(ctx) {
-    if (!isAdminById(ctx) && !isObserverById(ctx)) return;
-    
-    const adminPhone = getAdminPhoneByUserId(ctx.from.id);
-    if (!adminPhone) {
-        await ctx.reply('❌ Telefon raqamingiz aniqlanmadi. Iltimos, /start buyrug\'ini qayta bosing.');
-        return;
-    }
-    
-    const bonus = getBonusInfo(adminPhone);
-    
-    let message = `🎁 *BONUS SISTEMASI HISOBOTI*\n\n`;
-    message += `📊 *5+1 SISTEMA:* Har 5 ta toʻlangan diagnostikadan keyin 1 ta BEPUL!\n\n`;
-    message += `✅ *Toʻlangan diagnostikalar:* ${bonus.totalPaid} ta\n`;
-    message += `🎟️ *Ishlatilgan bepul:* ${bonus.usedFree} ta\n`;
-    message += `🎫 *Mavjud bepul:* ${bonus.availableFree} ta\n\n`;
-    
-    if (bonus.remainingForNextFree === 0) {
-        message += `🎉 *SIZ KEYINGI DIAGNOSTIKANI BEPUL OLASIZ!*\n`;
-        message += `✅ Diagnostika qoʻshganda avtomatik ravishda bepul boʻladi.\n`;
-    } else {
-        message += `⭐ *Keyingi bepul uchun:* Yana ${bonus.remainingForNextFree} ta toʻlov kerak\n`;
-        message += `📈 *Jami kutilayotgan bepul:* ${bonus.expectedTotalFree} ta\n`;
-    }
-    
-    message += `\n💰 *Asosiy narx:* ${BASE_PRICE.toLocaleString()} so‘m\n`;
-    message += `🎯 *Bepul diagnostika narxi:* 0 so‘m\n\n`;
-    message += `_❗Eslatma: Bepul diagnostika faqat diagnostika qoʻshish vaqtida avtomatik qoʻllaniladi_`;
-    
-    await ctx.reply(message, { parse_mode: 'Markdown' });
-}
-
-// ============ DIAGNOSTIKA FUNKSIYALARI ============
+// Diagnostika to'langanligini tekshirish (diagnostic_id yoki raqam bo'yicha)
 function isDiagnosticPaid(diagnostic) {
     const payments = loadPayments();
+    // Avval diagnostic_id bo'yicha tekshiramiz
     let isPaid = payments.some(p => p.diagnostic_id === diagnostic.id);
+    // Agar topilmasa, raqam bo'yicha tekshiramiz
     if (!isPaid) {
         isPaid = payments.some(p => p.car_number === diagnostic.raqam);
     }
     return isPaid;
 }
 
+// To'lanmagan diagnostikalarni olish
 function getUnpaidDiagnostics() {
     const diagnostics = loadDiagnostics();
     const diagnosed = diagnostics.filter(d => d.diagnostika === '✅ o‘tkazildi');
@@ -300,23 +147,30 @@ function getUnpaidDiagnostics() {
     return unpaid;
 }
 
+// To'langan diagnostikalarni olish (ENG YANGISI BIRINCHI)
 function getPaidDiagnostics() {
     const payments = loadPayments();
     const diagnostics = loadDiagnostics();
     const result = [];
     const processedIds = new Set();
     
+    // To'lovlarni sanasi bo'yicha ENG YANGISIDAN ESKIGA saralash
     const sortedPayments = [...payments].sort((a, b) => {
+        // paid_date ni solishtirish
         const dateA = new Date(a.paid_date);
         const dateB = new Date(b.paid_date);
-        return dateB - dateA;
+        return dateB - dateA; // Yangisi oldinga
     });
     
     for (const payment of sortedPayments) {
+        // Avval diagnostic_id bo'yicha qidiramiz
         let diagnostic = diagnostics.find(d => d.id === payment.diagnostic_id);
+        
+        // Agar topilmasa, raqam bo'yicha qidiramiz
         if (!diagnostic) {
             diagnostic = diagnostics.find(d => d.raqam === payment.car_number);
         }
+        
         if (diagnostic && !processedIds.has(diagnostic.id)) {
             processedIds.add(diagnostic.id);
             result.push({
@@ -325,16 +179,20 @@ function getPaidDiagnostics() {
             });
         }
     }
+    
     return result;
 }
 
+// To'lov qilish
 function addPayment(diagnosticId, adminName) {
     const diagnostics = loadDiagnostics();
     const diagnostic = diagnostics.find(d => d.id === diagnosticId);
     if (!diagnostic) return null;
     
     const payments = loadPayments();
+    // Avval diagnostic_id bo'yicha tekshiramiz
     let existing = payments.find(p => p.diagnostic_id === diagnosticId);
+    // Agar topilmasa, raqam bo'yicha tekshiramiz
     if (!existing) {
         existing = payments.find(p => p.car_number === diagnostic.raqam);
     }
@@ -346,14 +204,15 @@ function addPayment(diagnosticId, adminName) {
         car_number: diagnostic.raqam,
         amount: diagnostic.narxi,
         admin_name: adminName,
-        paid_date: formatTashkentDateTime()
+        paid_date: new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' })
     };
     payments.push(payment);
     savePayments(payments);
     return payment;
 }
 
-function addMultiplePayments(diagnosticIds, adminName, adminPhone) {
+// Bir nechta to'lov qilish
+function addMultiplePayments(diagnosticIds, adminName) {
     const diagnostics = loadDiagnostics();
     let payments = loadPayments();
     let totalAmount = 0;
@@ -364,25 +223,28 @@ function addMultiplePayments(diagnosticIds, adminName, adminPhone) {
         const diagnostic = diagnostics.find(d => d.id === diagnosticId);
         if (!diagnostic) continue;
         
+        // Avval diagnostic_id bo'yicha tekshiramiz
         let alreadyPaid = payments.some(p => p.diagnostic_id === diagnosticId);
+        // Agar topilmasa, raqam bo'yicha tekshiramiz
         if (!alreadyPaid) {
             alreadyPaid = payments.some(p => p.car_number === diagnostic.raqam);
         }
         if (alreadyPaid) continue;
         
+        const paidDate = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
         const payment = {
             id: Date.now(),
             diagnostic_id: diagnosticId,
             car_number: diagnostic.raqam,
             amount: diagnostic.narxi,
             admin_name: adminName,
-            paid_date: formatTashkentDateTime()
+            paid_date: paidDate
         };
         newPayments.push(payment);
         newPaymentInfos.push({
             car_number: diagnostic.raqam,
             amount: diagnostic.narxi,
-            paid_date: formatTashkentDateTime()
+            paid_date: paidDate
         });
         totalAmount += diagnostic.narxi;
     }
@@ -393,28 +255,27 @@ function addMultiplePayments(diagnosticIds, adminName, adminPhone) {
     return { count: newPayments.length, totalAmount, newPayments: newPaymentInfos };
 }
 
+// To'lovni o'chirish
 function removePayment(diagnosticId) {
     const payments = loadPayments();
     const diagnostic = loadDiagnostics().find(d => d.id === diagnosticId);
     if (!diagnostic) return;
+    
     const newPayments = payments.filter(p => 
         p.diagnostic_id !== diagnosticId && p.car_number !== diagnostic.raqam
     );
     savePayments(newPayments);
 }
 
-function addDiagnostic(carNumber, carType, isDiagnosed, adminId, adminName, adminPhone, extraWorks = [], extraAmount = 0, isFree = false) {
+// Diagnostika qo'shish
+function addDiagnostic(carNumber, carType, isDiagnosed, adminId, adminName, extraWorks = [], extraAmount = 0) {
     const diagnostics = loadDiagnostics();
-    const sana = formatTashkentDateTime();
+    const sana = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
     const diagnostika = isDiagnosed ? "✅ o‘tkazildi" : "❌ o‘tkazilmadi";
-    
     let narxi = 0;
+    
     if (isDiagnosed) {
-        if (isFree) {
-            narxi = 0;
-        } else {
-            narxi = BASE_PRICE + extraAmount;
-        }
+        narxi = BASE_PRICE + extraAmount;
     }
     
     const newDiagnostic = {
@@ -428,21 +289,15 @@ function addDiagnostic(carNumber, carType, isDiagnosed, adminId, adminName, admi
         extra_works: extraWorks,
         extra_amount: extraAmount,
         admin_id: adminId,
-        admin_name: adminName,
-        admin_phone: cleanPhone(adminPhone),
-        is_free: isFree || false
+        admin_name: adminName
     };
     
     diagnostics.push(newDiagnostic);
     saveDiagnostics(diagnostics);
-    
-    if (isFree && isDiagnosed) {
-        useFreeDiagnostic(adminPhone, newDiagnostic.id);
-    }
-    
     return newDiagnostic;
 }
 
+// Diagnostikani o'chirish
 function deleteDiagnostic(diagnosticId) {
     const diagnostics = loadDiagnostics();
     const index = diagnostics.findIndex(d => d.id === diagnosticId);
@@ -453,6 +308,7 @@ function deleteDiagnostic(diagnosticId) {
     return true;
 }
 
+// Oxirgi diagnostikani o'chirish
 function deleteLastDiagnostic() {
     const diagnostics = loadDiagnostics();
     if (diagnostics.length === 0) return null;
@@ -463,6 +319,7 @@ function deleteLastDiagnostic() {
     return removed;
 }
 
+// Diagnostikani yangilash
 function updateDiagnostic(diagnosticId, updates) {
     const diagnostics = loadDiagnostics();
     const index = diagnostics.findIndex(d => d.id === diagnosticId);
@@ -573,19 +430,17 @@ function getMainMenu(ctx) {
             ['🗑️ Diagnostika o\'chirish', '📊 Statistika'],
             ['💰 Jami summa', '📋 Diagnostikalar'],
             ['✅ To\'langanlar', '💵 To\'lovni tasdiqlash'],
-            ['➕ Qo\'shimcha summa qo\'shish', '🎁 Bonus ma\'lumot'],
+            ['➕ Qo\'shimcha summa qo\'shish'],
             ['💾 Backup olish', '🔄 Backup tiklash']
         ]).resize();
     } else if (isAdminById(ctx)) {
         return Markup.keyboard([
             ['🚗 Diagnostika qo\'shish', '✏️ Ma\'lumot tahrirlash'],
-            ['➕ Qo\'shimcha summa qo\'shish', '⬅️ Oxirgi diagnostikani o\'chirish'],
-            ['🎁 Bonus ma\'lumot', '💰 Jami summa']
+            ['➕ Qo\'shimcha summa qo\'shish', '⬅️ Oxirgi diagnostikani o\'chirish']
         ]).resize();
     } else if (isObserverById(ctx)) {
         return Markup.keyboard([
-            ['💰 Jami summa', '📋 Diagnostikalar', '✅ To\'langanlar'],
-            ['🎁 Bonus ma\'lumot']
+            ['💰 Jami summa', '📋 Diagnostikalar', '✅ To\'langanlar']
         ]).resize();
     }
     return null;
@@ -615,10 +470,6 @@ async function showEditMenu(ctx, diagnosticId) {
         message += `➕ *Qo‘shimcha summa:* ${(diagnostic.extra_amount || 0).toLocaleString()} so‘m\n`;
     } else {
         message += `📋 *Qo‘shimcha ishlar:* Yo‘q\n`;
-    }
-    
-    if (diagnostic.is_free) {
-        message += `🎁 *BONUS:* BEPUL DIAGNOSTIKA!\n`;
     }
     
     message += `💎 *Jami summa:* ${diagnostic.narxi.toLocaleString()} so‘m\n`;
@@ -809,6 +660,7 @@ async function showAllDiagnostics(ctx, page = 0) {
         const d = pageDiagnostics[idx];
         const num = start + idx + 1;
         
+        // To'lovni tekshirish: avval diagnostic_id, keyin raqam bo'yicha
         let isPaid = payments.some(p => p.diagnostic_id === d.id);
         if (!isPaid) {
             isPaid = payments.some(p => p.car_number === d.raqam);
@@ -816,9 +668,8 @@ async function showAllDiagnostics(ctx, page = 0) {
         
         const paidIcon = isPaid ? '✅' : '⏳';
         const paidText = isPaid ? 'To‘langan' : 'To‘lov kutilmoqda';
-        const freeIcon = d.is_free ? '🎁 ' : '';
         
-        message += `${num}. ${freeIcon}*${d.raqam}* | ${d.turi}\n`;
+        message += `${num}. *${d.raqam}* | ${d.turi}\n`;
         message += `   🆔 ID: \`${d.id}\`\n`;
         message += `   💰 ${d.narxi.toLocaleString()} so‘m | ${paidIcon} ${paidText}\n`;
         
@@ -826,10 +677,6 @@ async function showAllDiagnostics(ctx, page = 0) {
             message += `   🔧 Holat: ✅ Diagnostika o‘tkazildi\n`;
         } else {
             message += `   🔧 Holat: ❌ Diagnostika o‘tkazilmadi\n`;
-        }
-        
-        if (d.is_free) {
-            message += `   🎁 BONUS: BEPUL DIAGNOSTIKA!\n`;
         }
         
         if (d.extra_works && d.extra_works.length > 0) {
@@ -869,7 +716,7 @@ bot.action('close_diagnostics', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ============ TO'LANGAN DIAGNOSTIKALAR ============
+// ============ TO'LANGAN DIAGNOSTIKALAR (YANGI TARTIBDA) ============
 async function showPaidDiagnostics(ctx, page = 0) {
     const paidDiagnostics = getPaidDiagnostics();
     if (paidDiagnostics.length === 0) {
@@ -890,11 +737,9 @@ async function showPaidDiagnostics(ctx, page = 0) {
     pageItems.forEach((item, idx) => {
         const num = start + idx + 1;
         const d = item.diagnostic;
-        const freeIcon = d.is_free ? '🎁 ' : '';
-        message += `${num}. ${freeIcon}*${d.raqam}* | ${d.turi}\n`;
+        message += `${num}. *${d.raqam}* | ${d.turi}\n`;
         message += `   🆔 ID: \`${d.id}\`\n`;
         message += `   💰 ${item.amount.toLocaleString()} so‘m\n`;
-        if (d.is_free) message += `   🎁 BONUS: BEPUL DIAGNOSTIKA\n`;
         message += `   📅 To‘langan vaqt: ${item.paid_date}\n`;
         message += `   👤 Admin: ${item.admin_name}\n\n`;
     });
@@ -956,13 +801,11 @@ async function showUnpaidDiagnosticsMenu(ctx, page = 0) {
         const globalNum = start + i + 1;
         const isSelected = userData.selected.has(d.id);
         const checkbox = isSelected ? '☑️' : '⬜';
-        const freeIcon = d.is_free ? '🎁 ' : '';
-        message += `${checkbox} ${freeIcon}*${globalNum}.* ${d.raqam} | ${d.turi}\n`;
+        message += `${checkbox} *${globalNum}.* ${d.raqam} | ${d.turi}\n`;
         message += `   🆔 ID: \`${d.id}\` | 💰 ${d.narxi.toLocaleString()} so‘m`;
         if (d.extra_works && d.extra_works.length > 0) {
             message += ` (+${(d.extra_amount || 0).toLocaleString()} so‘m)`;
         }
-        if (d.is_free) message += ` | BEPUL!`;
         message += `\n\n`;
         
         selectButtons.push([
@@ -1042,11 +885,10 @@ bot.action('unpaid_confirm', async (ctx) => {
     }
     
     const diagnosticIds = Array.from(userData.selected);
-    const adminPhone = getAdminPhoneByUserId(ctx.from.id);
-    const result = addMultiplePayments(diagnosticIds, ctx.from.first_name, adminPhone);
+    const result = addMultiplePayments(diagnosticIds, ctx.from.first_name);
     
     if (result.count === 0) {
-        await ctx.reply('❌ Hech qanday to\'lov qo\'shilmadi!');
+        await ctx.reply('❌ Hech qanday to\'lov qo\'shilmadi! Barcha tanlangan diagnostikalar allaqachon to\'langan bo\'lishi mumkin.');
         await ctx.answerCbQuery();
         return;
     }
@@ -1060,10 +902,10 @@ bot.action('unpaid_confirm', async (ctx) => {
     
     let diagnosticsList = '';
     paidDiagnostics.forEach((d, idx) => {
-        const freeIcon = d.is_free ? '🎁 ' : '';
-        diagnosticsList += `${idx + 1}. ${freeIcon}${d.raqam} | ${d.turi} | ${d.narxi.toLocaleString()} so‘m | ID: ${d.id}\n`;
+        diagnosticsList += `${idx + 1}. ${d.raqam} | ${d.turi} | ${d.narxi.toLocaleString()} so‘m | ID: ${d.id}\n`;
     });
     
+    // Yangi to'langanlar ro'yxatini alohida ko'rsatish
     let newPaidMessage = '';
     if (result.newPayments && result.newPayments.length > 0) {
         newPaidMessage = '\n🆕 *YANGI TO‘LANGANLAR:*\n';
@@ -1227,7 +1069,7 @@ bot.command('start', async (ctx) => {
         let msg = isSuperAdminById(ctx) ? `👑 Assalomu alaykum SUPER ADMIN ${ctx.from.first_name}!` :
                   isAdminById(ctx) ? `👋 Assalomu alaykum Admin ${ctx.from.first_name}!` :
                   `👋 Assalomu alaykum Kuzatuvchi ${ctx.from.first_name}!`;
-        await ctx.reply(msg + `\n\n✅ Bot ishga tushdi.\n💰 *Asosiy diagnostika narxi:* ${BASE_PRICE.toLocaleString()} so‘m\n🎁 *Bonus:* Har 5 ta toʻlangan diagnostikadan keyin 1 ta BEPUL!\n🔄 *Eng yangi diagnostikalar birinchi ko‘rinadi*`, { parse_mode: 'Markdown', ...getMainMenu(ctx) });
+        await ctx.reply(msg + `\n\n✅ Bot ishga tushdi.\n💰 *Asosiy diagnostika narxi:* ${BASE_PRICE.toLocaleString()} so‘m\n🔄 *Eng yangi diagnostikalar birinchi ko‘rinadi*`, { parse_mode: 'Markdown', ...getMainMenu(ctx) });
         return;
     }
     await ctx.reply(`❌ Ro‘yxatdan o‘tmagansiz.\n\n📞 Iltimos, telefon raqamingizni yuboring:`, Markup.keyboard([[Markup.button.contactRequest('📞 Telefon raqamni yuborish')]]).resize());
@@ -1238,14 +1080,11 @@ bot.on('contact', async (ctx) => {
     const userId = ctx.from.id;
     const userName = ctx.from.first_name;
     
-    // Telefon raqamni saqlash
-    userPhoneMap.set(userId, cleanPhone(phone));
-    
     if (isAdminPhone(phone)) {
         if (!registeredAdminIds.has(userId)) {
             registeredAdminIds.add(userId);
             saveAdminIds(Array.from(registeredAdminIds));
-            await ctx.reply(`✅ Siz ADMIN sifatida tasdiqlandingiz!\n📞 Raqamingiz: ${phone}\n🎁 *Bonus:* Har 5 ta toʻlangan diagnostikadan keyin 1 ta BEPUL!`, { parse_mode: 'Markdown', ...getMainMenu(ctx) });
+            await ctx.reply(`✅ Siz ADMIN sifatida tasdiqlandingiz!\n📞 Raqamingiz: ${phone}`, getMainMenu(ctx));
             await sendToAllAdmins(`🆕 Yangi admin qo'shildi!\n👤 ${userName}\n📞 ${phone}`);
         } else {
             await ctx.reply(`✅ Siz allaqachon ADMIN sifatida tasdiqlangansiz!`, getMainMenu(ctx));
@@ -1281,12 +1120,11 @@ bot.command('list', async (ctx) => {
 // ============ QO'SHIMCHA ISH SUMMASINI KIRITISH ============
 let extraAmountStep = new Map();
 
-async function askExtraAmount(ctx, carNumber, carType, extraWorks, adminPhone) {
+async function askExtraAmount(ctx, carNumber, carType, extraWorks) {
     extraAmountStep.set(ctx.from.id, {
         carNumber: carNumber,
         carType: carType,
         extraWorks: extraWorks,
-        adminPhone: adminPhone,
         step: 'waiting_for_amount'
     });
     await ctx.reply(
@@ -1301,9 +1139,8 @@ async function createBackup(ctx) {
         version: 2,
         diagnostics: getAllDiagnostics(), 
         payments: loadPayments(), 
-        bonusUsage: loadBonusUsage(),
         base_price: BASE_PRICE, 
-        date: formatTashkentDateTime(),
+        date: new Date().toLocaleString('uz-UZ'),
         timestamp: Date.now()
     };
     
@@ -1315,46 +1152,13 @@ async function createBackup(ctx) {
             source: Buffer.from(backupJson, 'utf-8'), 
             filename: fileName 
         });
-        await ctx.reply(`✅ Backup yaratildi!\n📁 ${fileName}\n📊 Diagnostikalar: ${backupData.diagnostics.length} ta\n💰 To'lovlar: ${backupData.payments.length} ta\n🎁 Bonuslar: ${backupData.bonusUsage.usedFree.length} ta ishlatilgan`);
+        await ctx.reply(`✅ Backup yaratildi!\n📁 ${fileName}\n📊 Diagnostikalar: ${backupData.diagnostics.length} ta\n💰 To'lovlar: ${backupData.payments.length} ta`);
     } catch (err) {
         await ctx.reply(`❌ Backup yaratishda xato: ${err.message}`);
     }
 }
 
-// ============ BONUS MA'LUMOT TUGMASI ============
-bot.hears('🎁 Bonus ma\'lumot', async (ctx) => {
-    if (!isAllowed(ctx)) return;
-    await showBonusReport(ctx);
-});
-
-// ============ TEKSHIRUV FUNKSIYASI ============
-bot.command('check', async (ctx) => {
-    if (!isSuperAdminById(ctx)) return;
-    
-    const diagnostics = loadDiagnostics();
-    const payments = loadPayments();
-    const bonusUsage = loadBonusUsage();
-    
-    let message = '🔍 *TEKSHIRUV NATIJALARI*\n\n';
-    message += `📊 Diagnostikalar soni: ${diagnostics.length}\n`;
-    message += `💰 To'lovlar soni: ${payments.length}\n`;
-    message += `🎁 Ishlatilgan bepul diagnostikalar: ${bonusUsage.usedFree.length}\n\n`;
-    message += `⏰ Toshkent vaqti: ${formatTashkentDateTime()}\n\n`;
-    
-    // Admin bonus statistikasi
-    message += '*👤 ADMIN BONUS STATISTIKASI:*\n';
-    for (const adminId of registeredAdminIds) {
-        const adminPhone = userPhoneMap.get(adminId);
-        if (adminPhone) {
-            const bonus = getBonusInfo(adminPhone);
-            message += `📞 ${adminPhone}: Toʻlangan ${bonus.totalPaid} ta | Bepul ${bonus.availableFree} ta mavjud | ${bonus.remainingForNextFree} ta qolganda keyingi bepul\n`;
-        }
-    }
-    
-    await ctx.reply(message, { parse_mode: 'Markdown' });
-});
-
-// ============ BACKUP TIKLASH ============
+// ============ TO'LOVLARNI TUZATISH ============
 bot.command('fixpayments', async (ctx) => {
     if (!isSuperAdminById(ctx)) return;
     
@@ -1363,11 +1167,16 @@ bot.command('fixpayments', async (ctx) => {
     let fixedCount = 0;
     let newPayments = [];
     
+    // Mavjud to'lovlarni tahlil qilamiz
     for (const payment of payments) {
+        // Avval diagnostic_id bo'yicha diagnostikani topamiz
         let diagnostic = diagnostics.find(d => d.id === payment.diagnostic_id);
+        
+        // Agar topilmasa, raqam bo'yicha topamiz
         if (!diagnostic) {
             diagnostic = diagnostics.find(d => d.raqam === payment.car_number);
         }
+        
         if (diagnostic) {
             newPayments.push({
                 id: payment.id,
@@ -1430,15 +1239,19 @@ bot.on('text', async (ctx) => {
     }
     
     // BEKOR QILISH
-    if (text === '/cancel') {
+    if (text === '/cancel' && isSuperAdminById(ctx)) {
         deleteSteps.delete(ctx.from.id);
         addSteps.delete(ctx.from.id);
         extraAmountStep.delete(ctx.from.id);
         extraAmountSteps.delete(ctx.from.id);
         editSteps.delete(ctx.from.id);
-        if (isSuperAdminById(ctx) || isAdminById(ctx) || isObserverById(ctx)) {
-            await ctx.reply('❌ Barcha jarayonlar bekor qilindi', getMainMenu(ctx));
-        }
+        await ctx.reply('❌ Barcha jarayonlar bekor qilindi', getMainMenu(ctx));
+        return;
+    }
+    
+    // TO'LOVLARNI TUZATISH
+    if (text === '/fixpayments' && isSuperAdminById(ctx)) {
+        // Bu yuqorida qo'shilgan
         return;
     }
     
@@ -1531,7 +1344,7 @@ bot.on('text', async (ctx) => {
         return;
     }
     
-    // Diagnostika qo'shishda summa kiritish (bonus bilan)
+    // Diagnostika qo'shishda summa kiritish
     if (extraStep && extraStep.step === 'waiting_for_amount') {
         if (!isAdminById(ctx)) return;
         let extraAmount = 0;
@@ -1544,28 +1357,16 @@ bot.on('text', async (ctx) => {
             extraAmount = parsed;
         }
         
-        const adminPhone = extraStep.adminPhone;
-        const { totalPrice, isFree } = calculatePriceWithBonus(adminPhone, extraAmount);
-        
-        let bonusMessage = '';
-        if (isFree) {
-            bonusMessage = `\n🎁 *BONUS:* BEPUL DIAGNOSTIKA! (5+1 sistema)`;
-        }
-        
-        await addDiagnostic(extraStep.carNumber, extraStep.carType, true, ctx.from.id, ctx.from.first_name, adminPhone, extraStep.extraWorks, extraAmount, isFree);
+        const totalPrice = BASE_PRICE + extraAmount;
+        await addDiagnostic(extraStep.carNumber, extraStep.carType, true, ctx.from.id, ctx.from.first_name, extraStep.extraWorks, extraAmount);
         extraAmountStep.delete(ctx.from.id);
-        
-        await ctx.reply(`✅ *Diagnostika qo‘shildi!*\n\n🚗 *Raqam:* ${extraStep.carNumber}\n🏷️ *Turi:* ${extraStep.carType}\n💰 *Jami summa:* ${totalPrice.toLocaleString()} so‘m${bonusMessage}`, { parse_mode: 'Markdown' });
+        await ctx.reply(`✅ *Diagnostika qo‘shildi!*\n\n🚗 *Raqam:* ${extraStep.carNumber}\n🏷️ *Turi:* ${extraStep.carType}\n💰 *Jami summa:* ${totalPrice.toLocaleString()} so‘m`, { parse_mode: 'Markdown' });
         
         const total = getTotalDiagnosedSum();
         const paidSum = getPaidSum();
         const remaining = total - paidSum;
-        
-        const bonusInfo = getBonusInfo(adminPhone);
-        const bonusText = `\n🎁 *BONUS:* ${bonusInfo.availableFree} ta bepul mavjud | ${bonusInfo.remainingForNextFree} ta toʻlovdan keyin keyingi bepul`;
-        
         await sendToAllObservers(
-            `🔔 *Yangi diagnostika!*\n\n🚗 *Raqam:* ${extraStep.carNumber}\n🏷️ *Turi:* ${extraStep.carType}\n💰 *Summa:* ${totalPrice.toLocaleString()} so‘m${isFree ? ' (BEPUL!)' : ''}\n👤 *Admin:* ${ctx.from.first_name}\n\n📊 *JAMI SUM:* ${total.toLocaleString()} so‘m\n💵 *TO‘LOV QILINGAN:* ${paidSum.toLocaleString()} so‘m\n📉 *QOLDIQ:* ${remaining.toLocaleString()} so‘m${bonusText}`,
+            `🔔 *Yangi diagnostika!*\n\n🚗 *Raqam:* ${extraStep.carNumber}\n🏷️ *Turi:* ${extraStep.carType}\n💰 *Summa:* ${totalPrice.toLocaleString()} so‘m\n👤 *Admin:* ${ctx.from.first_name}\n\n📊 *JAMI SUM:* ${total.toLocaleString()} so‘m\n💵 *TO‘LOV QILINGAN:* ${paidSum.toLocaleString()} so‘m\n📉 *QOLDIQ:* ${remaining.toLocaleString()} so‘m`,
             { parse_mode: 'Markdown' }
         );
         await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
@@ -1649,22 +1450,8 @@ bot.on('text', async (ctx) => {
     
     // ============ MENYU TUGMALARI ============
     if (text === '🚗 Diagnostika qo\'shish' && isAdminById(ctx)) {
-        const adminPhone = getAdminPhoneByUserId(ctx.from.id);
-        if (!adminPhone) {
-            await ctx.reply('❌ Telefon raqamingiz aniqlanmadi. Iltimos, /start buyrug\'ini qayta bosing.');
-            return;
-        }
-        
-        const bonus = getBonusInfo(adminPhone);
-        let bonusMsg = '';
-        if (bonus.availableFree > 0) {
-            bonusMsg = `\n🎁 *SIZDA ${bonus.availableFree} TA BEPUL DIAGNOSTIKA BOR!*`;
-        } else if (bonus.remainingForNextFree > 0) {
-            bonusMsg = `\n⭐ *Keyingi bepul uchun:* Yana ${bonus.remainingForNextFree} ta toʻlov kerak`;
-        }
-        
-        addSteps.set(ctx.from.id, { step: 'number', adminPhone: adminPhone });
-        return ctx.reply(`📝 *1-qadam:* Avtomobil raqamini kiriting\n\n💰 *Asosiy diagnostika narxi:* ${BASE_PRICE.toLocaleString()} so‘m\n🎁 *5+1 SISTEMA:* Har 5 ta toʻlangan diagnostikadan keyin 1 ta BEPUL!${bonusMsg}\n\n✅ *Misol:* 01A777AA yoki A777AA`, { parse_mode: 'Markdown' });
+        addSteps.set(ctx.from.id, { step: 'number' });
+        return ctx.reply(`📝 *1-qadam:* Avtomobil raqamini kiriting\n\n💰 *Asosiy diagnostika narxi:* ${BASE_PRICE.toLocaleString()} so‘m\n\n✅ *Misol:* 01A777AA yoki A777AA\n\n⚠️ *Eslatma:* Har bir kirim yangi diagnostika sifatida qo‘shiladi`, { parse_mode: 'Markdown' });
     }
     
     if (text === '➕ Qo\'shimcha summa qo\'shish' && isAdminById(ctx)) {
@@ -1690,14 +1477,14 @@ bot.on('text', async (ctx) => {
     
     if (text === '📊 Statistika' && isSuperAdminById(ctx)) {
         const s = getStats();
-        return ctx.reply(`📊 *STATISTIKA*\n\n🚗 *Jami diagnostikalar:* ${s.total}\n✅ *Diagnostika qilingan:* ${s.diagnosed}\n❌ *Qilinmagan:* ${s.notDiagnosed}\n💵 *To‘langan diagnostikalar:* ${s.paidCount} ta\n\n💰 *Jami diagnostika summasi:* ${s.totalSum.toLocaleString()} so‘m\n💵 *To‘lov qilingan summa:* ${s.paidSum.toLocaleString()} so‘m\n📉 *Qolgan qoldiq:* ${s.remainingSum.toLocaleString()} so‘m\n🎁 *5+1 BONUS:* Har 5 ta toʻlangan diagnostikadan keyin 1 ta BEPUL!`, { parse_mode: 'Markdown' });
+        return ctx.reply(`📊 *STATISTIKA*\n\n🚗 *Jami diagnostikalar:* ${s.total}\n✅ *Diagnostika qilingan:* ${s.diagnosed}\n❌ *Qilinmagan:* ${s.notDiagnosed}\n💵 *To‘langan diagnostikalar:* ${s.paidCount} ta\n\n💰 *Jami diagnostika summasi:* ${s.totalSum.toLocaleString()} so‘m\n💵 *To‘lov qilingan summa:* ${s.paidSum.toLocaleString()} so‘m\n📉 *Qolgan qoldiq:* ${s.remainingSum.toLocaleString()} so‘m`, { parse_mode: 'Markdown' });
     }
     
     if (text === '💰 Jami summa') {
         const total = getTotalDiagnosedSum();
         const paidSum = getPaidSum();
         const remaining = total - paidSum;
-        return ctx.reply(`💰 *SUMMA HISOBOTI*\n\n💰 *Asosiy narx:* ${BASE_PRICE.toLocaleString()} so‘m\n📊 *Jami diagnostika summasi:* ${total.toLocaleString()} so‘m\n💵 *To‘lov qilingan:* ${paidSum.toLocaleString()} so‘m\n📉 *Qoldiq:* ${remaining.toLocaleString()} so‘m\n🎁 *5+1 BONUS:* Har 5 ta toʻlangan diagnostikadan keyin 1 ta BEPUL!`, { parse_mode: 'Markdown' });
+        return ctx.reply(`💰 *SUMMA HISOBOTI*\n\n💰 *Asosiy narx:* ${BASE_PRICE.toLocaleString()} so‘m\n📊 *Jami diagnostika summasi:* ${total.toLocaleString()} so‘m\n💵 *To‘lov qilingan:* ${paidSum.toLocaleString()} so‘m\n📉 *Qoldiq:* ${remaining.toLocaleString()} so‘m`, { parse_mode: 'Markdown' });
     }
     
     if (text === '📋 Diagnostikalar') {
@@ -1734,12 +1521,10 @@ bot.on('document', async (ctx) => {
         
         let diagnostics = [];
         let payments = [];
-        let bonusUsage = { usedFree: [] };
         
         if (backupData.version === 2) {
             diagnostics = backupData.diagnostics || [];
             payments = backupData.payments || [];
-            bonusUsage = backupData.bonusUsage || { usedFree: [] };
         } else if (backupData.cars) {
             diagnostics = backupData.cars.map(car => ({
                 ...car,
@@ -1753,20 +1538,18 @@ bot.on('document', async (ctx) => {
                     car_number: pc.raqam,
                     amount: pc.total_amount || pc.amount,
                     admin_name: pc.admin_name,
-                    paid_date: pc.paid_date || formatTashkentDateTime()
+                    paid_date: pc.paid_date || new Date().toLocaleString('uz-UZ')
                 }));
             }
         } else {
             throw new Error('Noto‘g‘ri backup fayl formati!');
         }
         
-        // Auto backup
         const autoBackup = {
             version: 2,
             diagnostics: getAllDiagnostics(),
             payments: loadPayments(),
-            bonusUsage: loadBonusUsage(),
-            date: formatTashkentDateTime(),
+            date: new Date().toLocaleString('uz-UZ'),
             timestamp: Date.now(),
             type: 'auto_backup_before_restore'
         };
@@ -1774,7 +1557,6 @@ bot.on('document', async (ctx) => {
         
         saveDiagnostics(diagnostics);
         savePayments(payments);
-        saveBonusUsage(bonusUsage);
         
         deleteSteps.delete(ctx.from.id);
         
@@ -1782,7 +1564,6 @@ bot.on('document', async (ctx) => {
             `✅ *BACKUP MUVAFFAQIYATLI TIKLANDI!*\n\n` +
             `📊 Diagnostikalar: ${diagnostics.length} ta\n` +
             `💰 To'lovlar: ${payments.length} ta\n` +
-            `🎁 Bonuslar: ${bonusUsage.usedFree.length} ta ishlatilgan\n` +
             `📅 Sana: ${backupData.date || 'Noma\'lum'}\n\n` +
             `⚠️ Eski ma'lumotlar avtomatik backup sifatida saqlandi.`,
             { parse_mode: 'Markdown' }
@@ -1881,7 +1662,7 @@ bot.action('finish_extra', async (ctx) => {
     const works = selectedExtraWorks.get(ctx.from.id) || [];
     addSteps.delete(ctx.from.id);
     selectedExtraWorks.delete(ctx.from.id);
-    await askExtraAmount(ctx, step.carNumber, step.carType, works, step.adminPhone);
+    await askExtraAmount(ctx, step.carNumber, step.carType, works);
     await ctx.answerCbQuery();
 });
 
@@ -1892,30 +1673,15 @@ bot.action('skip_extra', async (ctx) => {
         await ctx.answerCbQuery('❌ Jarayon qaytadan boshlang');
         return;
     }
-    
-    const adminPhone = step.adminPhone;
-    const { totalPrice, isFree } = calculatePriceWithBonus(adminPhone, 0);
-    
-    let bonusMessage = '';
-    if (isFree) {
-        bonusMessage = `\n🎁 *BONUS:* BEPUL DIAGNOSTIKA! (5+1 sistema)`;
-    }
-    
     addSteps.delete(ctx.from.id);
     selectedExtraWorks.delete(ctx.from.id);
-    
-    await addDiagnostic(step.carNumber, step.carType, true, ctx.from.id, ctx.from.first_name, adminPhone, [], 0, isFree);
-    
-    await ctx.editMessageText(`✅ *Diagnostika qo‘shildi!*\n\n🚗 *Raqam:* ${step.carNumber}\n🏷️ *Turi:* ${step.carType}\n✅ *Diagnostika:* O‘tkazildi\n💰 *Jami summa:* ${totalPrice.toLocaleString()} so‘m${bonusMessage}\n👤 *Admin:* ${ctx.from.first_name}`, { parse_mode: 'Markdown' });
+    await addDiagnostic(step.carNumber, step.carType, true, ctx.from.id, ctx.from.first_name, [], 0);
+    await ctx.editMessageText(`✅ *Diagnostika qo‘shildi!*\n\n🚗 *Raqam:* ${step.carNumber}\n🏷️ *Turi:* ${step.carType}\n✅ *Diagnostika:* O‘tkazildi\n💰 *Jami summa:* ${BASE_PRICE.toLocaleString()} so‘m\n👤 *Admin:* ${ctx.from.first_name}`, { parse_mode: 'Markdown' });
     
     const total = getTotalDiagnosedSum();
     const paidSum = getPaidSum();
     const remaining = total - paidSum;
-    
-    const bonusInfo = getBonusInfo(adminPhone);
-    const bonusText = `\n🎁 *BONUS:* ${bonusInfo.availableFree} ta bepul mavjud | ${bonusInfo.remainingForNextFree} ta toʻlovdan keyin keyingi bepul`;
-    
-    await sendToAllObservers(`🔔 *Yangi diagnostika!*\n\n🚗 *Raqam:* ${step.carNumber}\n🏷️ *Turi:* ${step.carType}\n💰 *Summa:* ${totalPrice.toLocaleString()} so‘m${isFree ? ' (BEPUL!)' : ''}\n👤 *Admin:* ${ctx.from.first_name}\n\n📊 *JAMI SUM:* ${total.toLocaleString()} so‘m\n💵 *TO‘LOV QILINGAN:* ${paidSum.toLocaleString()} so‘m\n📉 *QOLDIQ:* ${remaining.toLocaleString()} so‘m${bonusText}`, { parse_mode: 'Markdown' });
+    await sendToAllObservers(`🔔 *Yangi diagnostika!*\n\n🚗 *Raqam:* ${step.carNumber}\n🏷️ *Turi:* ${step.carType}\n💰 *Summa:* ${BASE_PRICE.toLocaleString()} so‘m\n👤 *Admin:* ${ctx.from.first_name}\n\n📊 *JAMI SUM:* ${total.toLocaleString()} so‘m\n💵 *TO‘LOV QILINGAN:* ${paidSum.toLocaleString()} so‘m\n📉 *QOLDIQ:* ${remaining.toLocaleString()} so‘m`, { parse_mode: 'Markdown' });
     await ctx.answerCbQuery();
     await ctx.reply('📋 Asosiy menyu:', getMainMenu(ctx));
 });
@@ -1929,17 +1695,44 @@ bot.action('cancel_add', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
+// ============ DEBUG FUNKSIYASI ============
+bot.command('check', async (ctx) => {
+    if (!isSuperAdminById(ctx)) return;
+    
+    const diagnostics = loadDiagnostics();
+    const payments = loadPayments();
+    
+    let message = '🔍 *TEKSHIRUV NATIJALARI*\n\n';
+    message += `📊 Diagnostikalar soni: ${diagnostics.length}\n`;
+    message += `💰 To'lovlar soni: ${payments.length}\n\n`;
+    
+    message += '*📋 DIAGNOSTIKALAR (oxirgi 10):*\n';
+    for (const d of diagnostics.slice(0, 10)) {
+        const isPaid = payments.some(p => p.diagnostic_id === d.id) || payments.some(p => p.car_number === d.raqam);
+        const status = isPaid ? '✅ TOLANGAN' : '⏳ TOLANMAGAN';
+        message += `ID: ${d.id} | ${d.raqam} | ${d.narxi.toLocaleString()} so‘m | ${status}\n`;
+    }
+    
+    if (payments.length > 0) {
+        message += '\n*💵 TO\'LOVLAR (oxirgi 10, yangisi birinchi):*\n';
+        const sortedPayments = [...payments].sort((a, b) => new Date(b.paid_date) - new Date(a.paid_date));
+        for (const p of sortedPayments.slice(0, 10)) {
+            message += `Diagnostic ID: ${p.diagnostic_id} | ${p.car_number} | ${p.amount.toLocaleString()} so‘m | ${p.paid_date}\n`;
+        }
+    }
+    
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+});
+
 // ============ BOTNI ISHGA TUSHIRISH ============
 bot.launch();
 console.log('🤖 Bot ishga tushdi!');
 console.log(`👑 Admin telefonlari: ${ADMIN_PHONES.join(', ')}`);
 console.log(`📞 Kuzatuvchi telefonlari: ${OBSERVER_PHONES.join(', ')}`);
 console.log(`💰 Asosiy diagnostika narxi: ${BASE_PRICE.toLocaleString()} so‘m`);
-console.log(`🎁 Bonus: 5+1 SISTEMA - Har 5 ta toʻlangan diagnostikadan keyin 1 ta BEPUL!`);
-console.log(`⏰ Toshkent vaqti: ${formatTashkentDateTime()}`);
 console.log(`📁 Diagnostikalar fayli: diagnostics.json`);
 console.log(`💰 To'lovlar fayli: payments.json`);
-console.log(`🎁 Bonus fayli: bonus_usage.json`);
+console.log(`✅ To'langanlar ro'yxati eng yangi to'langanlar birinchi chiqadi`);
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGTERM', () => bot.stop('SIGTERM')); 
