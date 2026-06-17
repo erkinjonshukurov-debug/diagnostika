@@ -264,6 +264,7 @@ function addDiagnostic(carNumber, carType, isDiagnosed, adminId, adminName, extr
     if (isDiagnosed) {
         narxi = BASE_PRICE + extraAmount;
     }
+    // Agar diagnostika o'tkazilmagan bo'lsa, narxi = 0
     
     const newDiagnostic = {
         id: Date.now(),
@@ -588,6 +589,7 @@ bot.action('finish_edit_extra', async (ctx) => {
     await ctx.answerCbQuery();
 });
 
+// 🟢 TO'G'RILANGAN: Diagnostika holatini "O'tkazildi" ga o'zgartirish
 bot.action('set_diag_yes', async (ctx) => {
     const editData = editSteps.get(ctx.from.id);
     if (!editData) return;
@@ -596,19 +598,41 @@ bot.action('set_diag_yes', async (ctx) => {
         await ctx.answerCbQuery('❌ Diagnostika topilmadi!');
         return;
     }
-    // 🟢 TO'G'RILANDI: narxni o'zgartirmaymiz, faqat holatni
-    updateDiagnostic(editData.diagnosticId, { diagnostika: "✅ o‘tkazildi" });
-    await ctx.editMessageText(`✅ Diagnostika holati "O‘tkazildi" ga o‘zgartirildi!`);
+    
+    // Agar diagnostika o'tkazilmagan bo'lsa, narxini hisoblaymiz
+    let newNarxi = diagnostic.narxi;
+    if (diagnostic.diagnostika === '❌ o‘tkazilmadi') {
+        // O'tkazilmagandan o'tkazilganga o'zgartirilganda narxni hisoblaymiz
+        newNarxi = BASE_PRICE + (diagnostic.extra_amount || 0);
+    }
+    // Agar allaqachon o'tkazilgan bo'lsa, narxni o'zgartirmaymiz
+    
+    updateDiagnostic(editData.diagnosticId, { 
+        diagnostika: "✅ o‘tkazildi",
+        narxi: newNarxi
+    });
+    await ctx.editMessageText(`✅ Diagnostika holati "O‘tkazildi" ga o‘zgartirildi!\n💰 Yangi narx: ${newNarxi.toLocaleString()} so‘m`);
     await showEditMenu(ctx, editData.diagnosticId);
     await ctx.answerCbQuery();
 });
 
+// 🟢 TO'G'RILANGAN: Diagnostika holatini "O'tkazilmadi" ga o'zgartirish
 bot.action('set_diag_no', async (ctx) => {
     const editData = editSteps.get(ctx.from.id);
     if (!editData) return;
-    updateDiagnostic(editData.diagnosticId, { diagnostika: "❌ o‘tkazilmadi", narxi: 0 });
+    const diagnostic = findDiagnosticById(editData.diagnosticId);
+    if (!diagnostic) {
+        await ctx.answerCbQuery('❌ Diagnostika topilmadi!');
+        return;
+    }
+    
+    // O'tkazilgandan o'tkazilmaganga o'zgartirilganda narx = 0
+    updateDiagnostic(editData.diagnosticId, { 
+        diagnostika: "❌ o‘tkazilmadi", 
+        narxi: 0 
+    });
     removePayment(editData.diagnosticId);
-    await ctx.editMessageText(`❌ Diagnostika holati "O‘tkazilmadi" ga o‘zgartirildi!`);
+    await ctx.editMessageText(`❌ Diagnostika holati "O‘tkazilmadi" ga o‘zgartirildi!\n💰 Narx: 0 so‘m`);
     await showEditMenu(ctx, editData.diagnosticId);
     await ctx.answerCbQuery();
 });
@@ -1166,6 +1190,14 @@ bot.command('fixprices', async (ctx) => {
                 fixedCount++;
                 fixedList.push(`${d.raqam}: ${oldPrice.toLocaleString()} -> ${correctPrice.toLocaleString()}`);
             }
+        } else if (d.diagnostika === '❌ o‘tkazilmadi') {
+            // 🟢 O'tkazilmagan diagnostikalar narxi 0 bo'lishi kerak
+            if (d.narxi !== 0) {
+                const oldPrice = d.narxi;
+                d.narxi = 0;
+                fixedCount++;
+                fixedList.push(`${d.raqam}: ${oldPrice.toLocaleString()} -> 0 so‘m (o‘tkazilmagan)`);
+            }
         }
     }
     
@@ -1329,7 +1361,7 @@ bot.on('text', async (ctx) => {
         return;
     }
     
-    // 🟢 Qo'shimcha summa kiritish (TO'G'RILANGAN)
+    // Qo'shimcha summa kiritish
     if (extraAddStep && extraAddStep.step === 'waiting_amount') {
         if (!isAdminById(ctx)) return;
         let extraAmount = 0;
@@ -1348,7 +1380,7 @@ bot.on('text', async (ctx) => {
         const allExtraWorks = [...(diagnostic.extra_works || []), ...extraAddStep.selectedWorks];
         const uniqueWorks = [...new Set(allExtraWorks)];
         const newExtraAmount = (diagnostic.extra_amount || 0) + extraAmount;
-        // 🟢 TO'G'RILANDI: diagnostic.narxi ga qo'shamiz
+        // 🟢 diagnostic.narxi + extraAmount (BASE_PRICE emas)
         const newTotalPrice = diagnostic.narxi + extraAmount;
         
         updateDiagnostic(extraAddStep.diagnosticId, {
@@ -1407,7 +1439,7 @@ bot.on('text', async (ctx) => {
         return;
     }
     
-    // 🟢 Tahrirlashda qo'shimcha summa kiritish (TO'G'RILANGAN)
+    // Tahrirlashda qo'shimcha summa kiritish
     if (editData && editData.step === 'waiting_extra_amount') {
         if (!isAdminById(ctx)) return;
         let extraAmount = 0;
@@ -1424,7 +1456,7 @@ bot.on('text', async (ctx) => {
             return ctx.reply('❌ Diagnostika topilmadi!');
         }
         
-        // 🟢 TO'G'RILANDI: diagnostic.narxi ga qo'shamiz
+        // 🟢 diagnostic.narxi + extraAmount (BASE_PRICE emas)
         const newNarxi = diagnostic.narxi + extraAmount;
         updateDiagnostic(editData.diagnosticId, { 
             extra_works: editData.currentExtra || [], 
@@ -1755,9 +1787,14 @@ bot.command('check', async (ctx) => {
     for (const d of diagnostics.slice(0, 10)) {
         const isPaid = payments.some(p => p.diagnostic_id === d.id) || payments.some(p => p.car_number === d.raqam);
         const status = isPaid ? '✅ TOLANGAN' : '⏳ TOLANMAGAN';
-        const correctPrice = BASE_PRICE + (d.extra_amount || 0);
+        let correctPrice = 0;
+        if (d.diagnostika === '✅ o‘tkazildi') {
+            correctPrice = BASE_PRICE + (d.extra_amount || 0);
+        } else {
+            correctPrice = 0;
+        }
         const priceStatus = d.narxi === correctPrice ? '✅' : '⚠️';
-        message += `${priceStatus} ID: ${d.id} | ${d.raqam} | ${d.narxi.toLocaleString()} so‘m (to'g'ri: ${correctPrice.toLocaleString()} so‘m) | ${status}\n`;
+        message += `${priceStatus} ID: ${d.id} | ${d.raqam} | ${d.narxi.toLocaleString()} so‘m (to'g'ri: ${correctPrice.toLocaleString()} so‘m) | ${status} | ${d.diagnostika}\n`;
     }
     
     if (payments.length > 0) {
