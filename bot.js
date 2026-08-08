@@ -135,6 +135,7 @@ function isDiagnosticPaid(diagnosticId) {
 function getUnpaidDiagnostics() {
     const diagnostics = loadDiagnostics();
     const diagnosed = diagnostics.filter(d => d.diagnostika === '✅ o‘tkazildi');
+    // Faqat to'lanmagan va diagnostikasi o'tkazilganlarni qaytarish
     return diagnosed.filter(d => !isDiagnosticPaid(d.id));
 }
 
@@ -180,7 +181,7 @@ function addDiagnostic(carNumber, carType, isDiagnosed, adminId, adminName, extr
     }
     
     const newDiagnostic = {
-        id: Math.floor(Date.now() + Math.random() * 1000000),
+        id: Date.now() + Math.floor(Math.random() * 1000000),
         sana,
         raqam: carNumber.toUpperCase(),
         turi: carType,
@@ -520,6 +521,7 @@ let userSelections = new Map();
 
 async function showUnpaidDiagnosticsMenu(ctx, page = 0) {
     const unpaidDiagnostics = getUnpaidDiagnostics();
+    
     if (unpaidDiagnostics.length === 0) {
         await ctx.reply('✅ Barcha diagnostikalar uchun to‘lov qilingan!');
         return;
@@ -585,7 +587,9 @@ async function showUnpaidDiagnosticsMenu(ctx, page = 0) {
     allButtons.push(...confirmButtons);
     
     if (userData.messageId) {
-        try { await ctx.deleteMessage(userData.messageId); } catch(e) {}
+        try { 
+            await ctx.telegram.deleteMessage(ctx.chat.id, userData.messageId); 
+        } catch(e) {}
     }
     const sentMsg = await ctx.reply(message, { parse_mode: 'Markdown', ...Markup.inlineKeyboard(allButtons) });
     userData.messageId = sentMsg.message_id;
@@ -610,6 +614,9 @@ bot.action(/select_diagnostic_(\d+)/, async (ctx) => {
     
     if (!diagnostic) {
         await ctx.answerCbQuery('❌ Diagnostika topilmadi!');
+        userData.selected.delete(diagnosticId);
+        userSelections.set(ctx.from.id, userData);
+        await showUnpaidDiagnosticsMenu(ctx, userData.currentPage);
         return;
     }
     
@@ -687,7 +694,7 @@ bot.action('unpaid_confirm', async (ctx) => {
     for (const diagnostic of selectedDiagnostics) {
         const paidDate = new Date().toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
         const payment = {
-            id: Math.floor(Date.now() + Math.random() * 1000),
+            id: Date.now() + Math.floor(Math.random() * 1000),
             diagnostic_id: diagnostic.id,
             car_number: diagnostic.raqam,
             amount: diagnostic.narxi,
@@ -724,7 +731,9 @@ bot.action('unpaid_confirm', async (ctx) => {
     );
     
     if (userData.messageId) { 
-        try { await ctx.deleteMessage(userData.messageId); } catch(e) {} 
+        try { 
+            await ctx.telegram.deleteMessage(ctx.chat.id, userData.messageId); 
+        } catch(e) {} 
     }
     userSelections.delete(ctx.from.id);
     
@@ -743,7 +752,9 @@ bot.action('unpaid_confirm', async (ctx) => {
 bot.action('unpaid_cancel', async (ctx) => {
     const userData = userSelections.get(ctx.from.id);
     if (userData && userData.messageId) { 
-        try { await ctx.deleteMessage(userData.messageId); } catch(e) {} 
+        try { 
+            await ctx.telegram.deleteMessage(ctx.chat.id, userData.messageId); 
+        } catch(e) {} 
     }
     userSelections.delete(ctx.from.id);
     await ctx.reply('❌ Bekor qilindi');
@@ -1585,7 +1596,7 @@ bot.on('document', async (ctx) => {
             payments = backupData.payments || [];
         } else if (backupData.cars) {
             diagnostics = backupData.cars.map(car => ({
-                id: car.id || Math.floor(Date.now() + Math.random() * 1000000),
+                id: car.id || Date.now() + Math.floor(Math.random() * 1000000),
                 sana: car.sana || new Date().toLocaleString('uz-UZ'),
                 raqam: car.raqam || car.car_number || 'N/A',
                 turi: car.turi || car.car_type || 'N/A',
@@ -1600,7 +1611,7 @@ bot.on('document', async (ctx) => {
             
             if (backupData.paid_cars) {
                 payments = backupData.paid_cars.map(pc => ({
-                    id: pc.id || Math.floor(Date.now() + Math.random() * 1000000),
+                    id: pc.id || Date.now() + Math.floor(Math.random() * 1000000),
                     diagnostic_id: pc.diagnostic_id || pc.id,
                     car_number: pc.car_number || pc.raqam || 'N/A',
                     amount: pc.amount || pc.total_amount || 0,
@@ -1611,7 +1622,7 @@ bot.on('document', async (ctx) => {
         } else if (Array.isArray(backupData)) {
             diagnostics = backupData.map(d => ({
                 ...d,
-                id: d.id || Math.floor(Date.now() + Math.random() * 1000000),
+                id: d.id || Date.now() + Math.floor(Math.random() * 1000000),
                 sana: d.sana || new Date().toLocaleString('uz-UZ'),
                 diagnostika: d.diagnostika || (d.is_diagnosed ? '✅ o‘tkazildi' : '❌ o‘tkazilmadi'),
                 narxi: d.narxi || d.total_amount || d.amount || 0,
@@ -1624,12 +1635,12 @@ bot.on('document', async (ctx) => {
         }
         
         diagnostics = diagnostics.map(d => {
-            if (!d.id) d.id = Math.floor(Date.now() + Math.random() * 1000000);
+            if (!d.id) d.id = Date.now() + Math.floor(Math.random() * 1000000);
             return d;
         });
         
         if (diagnostics.length === 0) {
-            await ctx.editMessageText(loadingMsg.message_id, '⚠️ *Backup faylda hech qanday diagnostika topilmadi!*', { parse_mode: 'Markdown' });
+            await ctx.telegram.editMessageText(ctx.chat.id, loadingMsg.message_id, null, '⚠️ *Backup faylda hech qanday diagnostika topilmadi!*', { parse_mode: 'Markdown' });
             deleteSteps.delete(ctx.from.id);
             return;
         }
@@ -1650,7 +1661,7 @@ bot.on('document', async (ctx) => {
         
         deleteSteps.delete(ctx.from.id);
         
-        await ctx.editMessageText(loadingMsg.message_id,
+        await ctx.telegram.editMessageText(ctx.chat.id, loadingMsg.message_id, null,
             `✅ *BACKUP MUVAFFAQIYATLI TIKLANDI!*\n\n📊 Diagnostikalar: ${diagnostics.length} ta\n💰 To'lovlar: ${payments.length} ta\n📅 Sana: ${backupData.date || new Date().toLocaleString('uz-UZ')}`,
             { parse_mode: 'Markdown' }
         );
@@ -1658,7 +1669,7 @@ bot.on('document', async (ctx) => {
         
     } catch (err) {
         console.error('Backup tiklashda xato:', err);
-        await ctx.editMessageText(loadingMsg.message_id, `❌ *Backup tiklashda xato!*\n\n${err.message}`, { parse_mode: 'Markdown' });
+        await ctx.telegram.editMessageText(ctx.chat.id, loadingMsg.message_id, null, `❌ *Backup tiklashda xato!*\n\n${err.message}`, { parse_mode: 'Markdown' });
         deleteSteps.delete(ctx.from.id);
     }
 });
