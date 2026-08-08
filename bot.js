@@ -74,14 +74,26 @@ if (!fs.existsSync(PAYMENTS_FILE)) fs.writeFileSync(PAYMENTS_FILE, JSON.stringif
 function loadDiagnostics() {
     try {
         const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-        return data.map(d => ({ ...d, id: String(d.id) })).sort((a, b) => Number(b.id) - Number(a.id));
+        // Barcha ID larni String formatiga o'tkazamiz
+        return data.map(d => ({
+            ...d,
+            id: String(d.id)
+        })).sort((a, b) => {
+            // Raqamli tartibda saralash (eng yangisi birinchi)
+            return Number(b.id) - Number(a.id);
+        });
     } catch(e) {
         return [];
     }
 }
 
 function saveDiagnostics(data) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    // ID larni String formatida saqlaymiz
+    const savedData = data.map(d => ({
+        ...d,
+        id: String(d.id)
+    }));
+    fs.writeFileSync(DB_FILE, JSON.stringify(savedData, null, 2));
 }
 
 function getAllDiagnostics() {
@@ -118,14 +130,23 @@ loadObserverIds();
 function loadPayments() {
     try {
         const data = JSON.parse(fs.readFileSync(PAYMENTS_FILE, 'utf8'));
-        return data.map(p => ({ ...p, id: String(p.id), diagnostic_id: String(p.diagnostic_id) }));
+        return data.map(p => ({
+            ...p,
+            id: String(p.id),
+            diagnostic_id: String(p.diagnostic_id)
+        }));
     } catch(e) {
         return [];
     }
 }
 
 function savePayments(payments) {
-    fs.writeFileSync(PAYMENTS_FILE, JSON.stringify(payments, null, 2));
+    const savedData = payments.map(p => ({
+        ...p,
+        id: String(p.id),
+        diagnostic_id: String(p.diagnostic_id)
+    }));
+    fs.writeFileSync(PAYMENTS_FILE, JSON.stringify(savedData, null, 2));
 }
 
 function isDiagnosticPaid(diagnosticId) {
@@ -135,8 +156,9 @@ function isDiagnosticPaid(diagnosticId) {
 
 function getUnpaidDiagnostics() {
     const diagnostics = loadDiagnostics();
+    // Faqat diagnostikasi o'tkazilgan va to'lanmaganlarni qaytarish
     const diagnosed = diagnostics.filter(d => d.diagnostika === '✅ o‘tkazildi');
-    return diagnosed.filter(d => !isDiagnosticPaid(d.id));
+    return diagnosed.filter(d => !isDiagnosticPaid(String(d.id)));
 }
 
 function getPaidDiagnostics() {
@@ -153,8 +175,8 @@ function getPaidDiagnostics() {
     
     for (const payment of sortedPayments) {
         const diagnostic = diagnostics.find(d => String(d.id) === String(payment.diagnostic_id));
-        if (diagnostic && !processedIds.has(diagnostic.id)) {
-            processedIds.add(diagnostic.id);
+        if (diagnostic && !processedIds.has(String(diagnostic.id))) {
+            processedIds.add(String(diagnostic.id));
             result.push({
                 ...payment,
                 diagnostic: diagnostic
@@ -180,8 +202,11 @@ function addDiagnostic(carNumber, carType, isDiagnosed, adminId, adminName, extr
         narxi = BASE_PRICE + extraAmount;
     }
     
+    // Unikal ID (String formatda)
+    const newId = String(Date.now() + Math.floor(Math.random() * 10000));
+    
     const newDiagnostic = {
-        id: String(Date.now() + Math.floor(Math.random() * 1000)),
+        id: newId,
         sana,
         raqam: carNumber.toUpperCase(),
         turi: carType,
@@ -594,7 +619,7 @@ async function showUnpaidDiagnosticsMenu(ctx, page = 0) {
     userSelections.set(ctx.from.id, userData);
 }
 
-// DIGIT va NUQTA formatlaridagi ID larni to'g'ri tutib olish
+// ID ni String formatida qabul qilish
 bot.action(/select_diagnostic_(.+)/, async (ctx) => {
     if (!isSuperAdminById(ctx)) {
         await ctx.answerCbQuery('❌ Sizda bu amalni bajarish huquqi yo\'q!');
@@ -1619,9 +1644,11 @@ bot.on('document', async (ctx) => {
             throw new Error('Noto‘g‘ri backup fayl formati!');
         }
         
-        diagnostics = diagnostics.map(d => {
-            return { ...d, id: String(Math.floor(Number(d.id))) };
-        });
+        // Barcha ID larni String formatiga o'tkazamiz
+        diagnostics = diagnostics.map(d => ({
+            ...d,
+            id: String(d.id)
+        }));
         
         if (diagnostics.length === 0) {
             await ctx.telegram.editMessageText(ctx.chat.id, loadingMsg.message_id, null, '⚠️ *Backup faylda hech qanday diagnostika topilmadi!*', { parse_mode: 'Markdown' });
